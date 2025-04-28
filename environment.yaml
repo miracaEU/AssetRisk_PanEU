@@ -1,0 +1,13 @@
+name: miraca
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.11
+  - shapely>=2.0
+  - geopandas
+  - jupyter
+  - rasterio
+  - xarray
+  - pytest
+  - black
+  - ruff
