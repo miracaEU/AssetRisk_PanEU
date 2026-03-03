@@ -1,1 +1,15 @@
 **/*.pyc
+
+data/
+figures/
+results/
+book/floodProtection_v2019_paper3.tif
+src/disEnsemble_highExtremes_*.nc
+src/hybas_eu_lev08_v1c.*
+src/basins_*.parquet
+src/*.tif
+src/*.xlsx
+src/*.parquet
+src/*.geojson
+src/logs/
+book/wildfire_analysis_results/
