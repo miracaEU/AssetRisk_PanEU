@@ -13,3 +13,4 @@ src/*.xlsx
 src/*.parquet
 src/*.geojson
 src/logs/
+config.yml

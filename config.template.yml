@@ -1,0 +1,14 @@
+# MIRACA pipeline configuration template.
+# Copy this file to config.yml and fill in the paths for your machine.
+# config.yml is gitignored and should never be committed.
+
+exposure_dir: /path/to/exposure/files
+output_dir: /path/to/output
+river_hazard_dir: /path/to/hazard/river
+wind_hazard_dir: /path/to/hazard/wind
+eq_hazard_dir: /path/to/hazard/earthquakes
+vulnerability_path: /path/to/repo/data/Table_D2_Hazard_Fragility_and_Vulnerability_Curves_V1.1.0_conversions.xlsx
+fragility_path: /path/to/repo/data/EQ_fragility.xlsx
+protection_standard_path: /path/to/hazard/floodProtection_v2019_paper3.tif
+basin_data_path: /path/to/repo/data/basins_abs_shift_return_periods.parquet
+coastal_stac_url: "https://storage.googleapis.com/coclico-data-public/coclico/coclico-stac/catalog.json"

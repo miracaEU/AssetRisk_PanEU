@@ -19,6 +19,10 @@ Usage:
     python run_pipeline.py --hazards river coastal  # specific hazards only
     python run_pipeline.py --workers 4              # limit parallel workers
     python run_pipeline.py --skip-existing          # skip already-processed files
+
+Configuration:
+    Copy config.template.yml to config.yml in the repo root and fill in
+    the paths for your machine. config.yml is gitignored and never committed.
 """
 
 import argparse
@@ -33,6 +37,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
+import yaml
 import pandas as pd
 import geopandas as gpd
 
@@ -49,61 +54,39 @@ warnings.simplefilter(action="ignore", category=RuntimeWarning)
 
 sys.excepthook = lambda *args: None
 
+
 # ---------------------------------------------------------------------------
-# Configuration — edit these paths for your environment
+# Configuration — loaded from config.yml in repo root
 # ---------------------------------------------------------------------------
+def _load_config_file() -> dict:
+    config_path = Path(__file__).parent.parent / "config.yml"
+    try:
+        with open(config_path) as f:
+            return yaml.safe_load(f)
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"config.yml not found at {config_path}.\n"
+            "Copy config.template.yml to config.yml and fill in your paths."
+        )
+
+_cfg = _load_config_file()
 
 class Config:
-    # Exposure database
-    EXPOSURE_DIR = Path(
-        r"C:\Users\eks510\OneDrive - Vrije Universiteit Amsterdam"
-        r"\Documenten - MIRACA\General\Deliverables and Milestones"
-        r"\Milestone_Intermediate version of harmonised exposure database"
-        r"\Exposure_database_new_version_2026\Exposure_files"
+    EXPOSURE_DIR             = Path(_cfg["exposure_dir"])
+    OUTPUT_DIR               = Path(_cfg["output_dir"])
+    RIVER_HAZARD_DIR         = Path(_cfg["river_hazard_dir"])
+    WIND_HAZARD_DIR          = Path(_cfg["wind_hazard_dir"])
+    EQ_HAZARD_DIR            = Path(_cfg["eq_hazard_dir"])
+    VULNERABILITY_PATH       = Path(_cfg["vulnerability_path"])
+    FRAGILITY_PATH           = Path(_cfg["fragility_path"])
+    PROTECTION_STANDARD_PATH = Path(_cfg["protection_standard_path"])
+    BASIN_DATA_PATH          = Path(_cfg["basin_data_path"])
+    COASTAL_STAC_URL         = _cfg.get(
+        "coastal_stac_url",
+        "https://storage.googleapis.com/coclico-data-public/coclico/coclico-stac/catalog.json"
     )
 
-    # Output directory
-    OUTPUT_DIR = Path(r"C:\MIRACA\risk")
-
-    # Hazard data directories
-    RIVER_HAZARD_DIR = Path(
-        r"C:\Users\eks510\OneDrive - Vrije Universiteit Amsterdam"
-        r"\Documenten - MIRACA\WP3\D3.2\Hazard_data\River_floods"
-    )
-    WIND_HAZARD_DIR = Path(
-        r"C:\Users\eks510\OneDrive - Vrije Universiteit Amsterdam"
-        r"\Documenten - MIRACA\WP3\D3.2\Hazard_data\Windstorms"
-    )
-    EQ_HAZARD_DIR = Path(
-        r"C:\Users\eks510\OneDrive - Vrije Universiteit Amsterdam"
-        r"\Documenten - MIRACA\WP3\D3.2\Hazard_data\Earthquakes"
-    )
-
-    # Vulnerability / fragility curves
-    VULNERABILITY_PATH = Path(
-        r"C:\Users\eks510\OneDrive - Vrije Universiteit Amsterdam"
-        r"\12_repositories\AssetRisk_PanEU\data\Table_D2_Hazard_Fragility_and_Vulnerability_Curves_V1.1.0_conversions.xlsx"
-    )
-    FRAGILITY_PATH = Path(
-        r"C:\Users\eks510\OneDrive - Vrije Universiteit Amsterdam"
-        r"\12_repositories\AssetRisk_PanEU\data\EQ_fragility.xlsx"
-    )
-
-    # Flood protection standards raster
-    PROTECTION_STANDARD_PATH = Path(
-        r"C:\Users\eks510\OneDrive - Vrije Universiteit Amsterdam"
-        r"\Documenten - MIRACA\WP3\D3.2\Hazard_data\floodProtection_v2019_paper3.tif")
-
-    # Basin-level climate RP shift data (for future river scenarios)
-    BASIN_DATA_PATH = Path(
-        r"C:\Users\eks510\OneDrive - Vrije Universiteit Amsterdam"
-        r"\12_repositories\AssetRisk_PanEU\data\basins_abs_shift_return_periods.parquet"
-    )
-
-    # Coastal STAC
-    COASTAL_STAC_URL = "https://storage.googleapis.com/coclico-data-public/coclico/coclico-stac/catalog.json"
-
-    # Curve exclusions per asset type per hazard
+    # Curve exclusions per asset type per hazard (environment-independent)
     FLOOD_CURVE_EXCLUSIONS = {
         "power": {
             "tower":       ["F1.1","F1.2","F1.3","F1.4","F1.5","F1.6","F1.7","F2.1","F2.2","F2.3","F5.1","F6.1","F6.2"],
@@ -471,14 +454,17 @@ if __name__ == "__main__":
     args = parse_args()
     cfg = Config()
 
+    print(f"\nConfig loaded from: {Path(__file__).parent / 'config.yml'}")
+    print(f"Exposure dir: {cfg.EXPOSURE_DIR}")
+
     if cfg.EXPOSURE_DIR.exists():
         countries = list_available_countries(cfg.EXPOSURE_DIR)
         assets    = list_available_asset_types(cfg.EXPOSURE_DIR)
-        print(f"\nDiscovered countries: {countries}")
+        print(f"Discovered countries: {countries}")
         print(f"Discovered assets:    {assets}")
     else:
         print("\n⚠ Exposure directory not found — nothing to process.")
-        print("  Please update Config.EXPOSURE_DIR in run_pipeline.py")
+        print("  Please check the paths in your config.yml")
         sys.exit(1)
 
     run_pipeline(
