@@ -58,6 +58,7 @@ sys.excepthook = lambda *args: None
 # ---------------------------------------------------------------------------
 # Configuration — loaded from config.yml in repo root
 # ---------------------------------------------------------------------------
+
 def _load_config_file() -> dict:
     config_path = Path(__file__).parent.parent / "config.yml"
     try:
@@ -121,13 +122,53 @@ class Config:
 
 
 # ---------------------------------------------------------------------------
-# Output path helper
+# Output path helper + completeness check
 # ---------------------------------------------------------------------------
+
+# All EAD columns that must be present for a file to be considered complete
+COMPLETE_EAD_COLS = [
+    'EAD_river', 'EAD_river_min', 'EAD_river_max', 'exposure_river_100',
+    'EAD_river_1.5C', 'EAD_river_1.5C_min', 'EAD_river_1.5C_max',
+    'EAD_river_2.0C', 'EAD_river_2.0C_min', 'EAD_river_2.0C_max',
+    'EAD_river_3.0C', 'EAD_river_3.0C_min', 'EAD_river_3.0C_max',
+    'EAD_river_4.0C', 'EAD_river_4.0C_min', 'EAD_river_4.0C_max',
+    'EAD_coastal', 'EAD_coastal_min', 'EAD_coastal_max',
+    'EAD_coastal_2050_SSP245', 'EAD_coastal_2050_SSP245_min', 'EAD_coastal_2050_SSP245_max',
+    'EAD_coastal_2050_SSP585', 'EAD_coastal_2050_SSP585_min', 'EAD_coastal_2050_SSP585_max',
+    'EAD_coastal_2100_SSP245', 'EAD_coastal_2100_SSP245_min', 'EAD_coastal_2100_SSP245_max',
+    'EAD_coastal_2100_SSP585', 'EAD_coastal_2100_SSP585_min', 'EAD_coastal_2100_SSP585_max',
+    'exposure_coastal_100',
+    'EAD_windstorm', 'EAD_windstorm_min', 'EAD_windstorm_max', 'exposure_wind_100',
+    'EAD_earthquake', 'EAD_earthquake_min', 'EAD_earthquake_max', 'exposure_eq_475',
+]
+
 
 def output_path(output_dir: Path, country_iso2: str, asset_type: str) -> Path:
     """Generate output file path for a country + asset combination."""
     iso3 = to_iso3(country_iso2)
     return output_dir / f"{iso3}_{asset_type}_risk.parquet"
+
+
+def is_complete(path: Path) -> bool:
+    """
+    Check if an output parquet file exists and contains all required EAD columns.
+    Reads only the schema (no data loaded) for efficiency.
+    """
+    if not path.exists():
+        return False
+    try:
+        import pyarrow.parquet as pq
+        schema = pq.read_schema(path)
+        existing_cols = set(schema.names)
+        missing = [c for c in COMPLETE_EAD_COLS if c not in existing_cols]
+        if missing:
+            print(f"  [skip check] {path.name} incomplete — missing {len(missing)} cols "
+                  f"(e.g. {missing[:3]}{'...' if len(missing) > 3 else ''}), will re-run.")
+            return False
+        return True
+    except Exception as e:
+        print(f"  [skip check] Could not read {path.name}: {e} — will re-run.")
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +199,9 @@ def run_single(
 
     out_path = output_path(config.OUTPUT_DIR, country_iso2, asset_type)
 
-    if skip_existing and out_path.exists():
+    # Skip if file exists and contains all required EAD columns
+    if skip_existing and is_complete(out_path):
+        print(f"  [skip] {label} — already complete.")
         return {"label": label, "status": "skipped", "elapsed": 0}
 
     # When multiple outer workers are active, disable inner RP-level parallelism
@@ -303,7 +346,7 @@ def run_pipeline(
                        When > 1, inner RP-level parallelism is automatically disabled.
                        Set to 1 for sequential combinations with full inner parallelism.
                        (None = all CPUs, inner parallelism disabled)
-        skip_existing: Skip combinations where output file already exists
+        skip_existing: Skip combinations where output file exists and contains all EAD columns
     """
     all_hazards = ["river", "coastal", "windstorm", "earthquake"]
     hazards = hazards or all_hazards
@@ -393,8 +436,10 @@ def run_pipeline(
             if r["status"] == "error":
                 print(f"    - {r['label']}: {r.get('error', '?')}")
 
-    log_path = config.OUTPUT_DIR / f"pipeline_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-    config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    # Save log to dedicated logs subfolder
+    log_dir = config.OUTPUT_DIR / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"pipeline_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     pd.DataFrame(results).to_csv(log_path, index=False)
     print(f"\n  Run log saved to: {log_path}")
 
@@ -441,8 +486,12 @@ def parse_args():
              "(default: all CPUs, inner parallelism disabled)"
     )
     parser.add_argument(
-        "--skip-existing", action="store_true",
-        help="Skip combinations where output file already exists"
+        "--skip-existing", dest="skip_existing", action="store_true", default=True,
+        help="Skip combinations where output file exists and contains all EAD columns (default: on)"
+    )
+    parser.add_argument(
+        "--no-skip-existing", dest="skip_existing", action="store_false",
+        help="Re-run all combinations even if output already exists"
     )
     return parser.parse_args()
 
@@ -454,7 +503,7 @@ if __name__ == "__main__":
     args = parse_args()
     cfg = Config()
 
-    print(f"\nConfig loaded from: {Path(__file__).parent / 'config.yml'}")
+    print(f"\nConfig loaded from: {Path(__file__).parent.parent / 'config.yml'}")
     print(f"Exposure dir: {cfg.EXPOSURE_DIR}")
 
     if cfg.EXPOSURE_DIR.exists():
