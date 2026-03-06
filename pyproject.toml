@@ -1,0 +1,28 @@
+[project]
+name = "assetrisk-paneu"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "damagescanner",
+    "exactextract>=0.3.0",
+    "geopandas>=1.1.2",
+    "jupyterlab>=4.5.5",
+    "matplotlib>=3.10.8",
+    "numpy>=2.4.2",
+    "openpyxl>=3.1.5",
+    "pyarrow>=23.0.1",
+    "pyproj>=3.7.2",
+    "pystac>=1.14.3",
+    "pystac-client>=0.9.0",
+    "rasterio>=1.5.0",
+    "rioxarray>=0.21.0",
+    "scipy>=1.17.1",
+    "tqdm>=4.67.3",
+    "xarray>=2025.11.0",
+    "xlrd>=2.0.2",
+]
+
+[tool.uv.sources]
+damagescanner = { path = "../DamageScanner", editable = true }

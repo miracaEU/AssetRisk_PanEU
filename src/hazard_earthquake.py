@@ -86,6 +86,24 @@ from constants import (
 # Fragility curve preparation
 # ---------------------------------------------------------------------------
 
+def _standardise_damage_states(fragility_curves: pd.DataFrame) -> pd.DataFrame:
+    """Rename damage state columns to standardised names."""
+    new_cols = [
+        (curve_id, DAMAGE_STATE_MAP.get(ds, ds.lower()))
+        for curve_id, ds in fragility_curves.columns
+    ]
+    fragility_curves.columns = pd.MultiIndex.from_tuples(new_cols)
+    return fragility_curves
+
+def _is_curve_parametric(fragility_df: pd.DataFrame, curve_id: str) -> bool:
+    """Return True if a curve uses parametric (median/beta) format."""
+    col = next((c for c in fragility_df.columns if c[0] == curve_id), None)
+    if col is None:
+        return False
+    vals = [str(v).lower() for v in fragility_df[col].dropna()]
+    return any("median" in v for v in vals) and any("beta" in v for v in vals)
+
+
 def prepare_earthquake_fragility(
     asset_type: str,
     fragility_path: Union[str, Path],
@@ -96,6 +114,7 @@ def prepare_earthquake_fragility(
     Handles both:
       - Pre-computed curves (PGA as index, damage state probabilities as columns)
       - Parametric curves (median + beta per damage state → generated via lognormal CDF)
+      - Mixed: some curves parametric, some pre-computed (e.g. healthcare E21.67-C)
 
     Args:
         asset_type:     Internal asset type name
@@ -103,14 +122,10 @@ def prepare_earthquake_fragility(
 
     Returns:
         (fragility_curves, multi_curves, maxdam_mean, maxdam_min, maxdam_max)
-
-        fragility_curves: DataFrame indexed by PGA, columns = MultiIndex (curve_id, damage_state)
-        multi_curves:     Dict {curve_id: fragility_curves} — same object, keyed per curve
-        maxdam_*:         DataFrame with damage values per object type
     """
     fragility_df = pd.read_excel(fragility_path, sheet_name="E_Frag_PGA", header=[0, 1])
 
-    ci_system  = DICT_CIS_VULNERABILITY_EARTHQUAKE.get(asset_type, {})
+    ci_system = DICT_CIS_VULNERABILITY_EARTHQUAKE.get(asset_type, {})
     if not ci_system:
         raise ValueError(
             f"No earthquake fragility curves defined for asset type '{asset_type}'. "
@@ -119,31 +134,38 @@ def prepare_earthquake_fragility(
 
     unique_curves = {c for curves in ci_system.values() for c in curves}
 
-    # Detect parametric vs pre-computed
-    sample_col = next(
-        (col for col in fragility_df.columns if col[0] in unique_curves), None
-    )
-    if sample_col is None:
-        available = fragility_df.columns.get_level_values(0).unique()
+    # Validate at least some curves exist in the Excel
+    available_level0 = set(fragility_df.columns.get_level_values(0))
+    found_curves = unique_curves & available_level0
+    if not found_curves:
         raise ValueError(
             f"No fragility curves found for {asset_type}. "
-            f"Required: {unique_curves}, Available: {list(available)}"
+            f"Required: {unique_curves}, Available: {list(available_level0)}"
         )
 
-    sample_vals = [str(v).lower() for v in fragility_df[sample_col].dropna()]
-    is_parametric = any("median" in v for v in sample_vals) and any("beta" in v for v in sample_vals)
+    # Split curves into parametric vs pre-computed
+    parametric_curves = {c for c in unique_curves if _is_curve_parametric(fragility_df, c)}
+    precomputed_curves = unique_curves - parametric_curves
 
-    if is_parametric:
-        fragility_curves = _build_curves_from_parameters(fragility_df, unique_curves)
-    else:
-        fragility_curves = _load_precomputed_curves(fragility_df, unique_curves)
+    
+    # Load each group and concatenate
+    frames = []
+    if parametric_curves:
+        frames.append(_build_curves_from_parameters(fragility_df, parametric_curves))
+    if precomputed_curves:
+        frames.append(_load_precomputed_curves(fragility_df, precomputed_curves))
+
+    fragility_curves = pd.concat(frames, axis=1) if len(frames) > 1 else frames[0]
 
     # Standardise damage state names
     fragility_curves = _standardise_damage_states(fragility_curves)
 
     # Build multi_curves dict
-    multi_curves = {curve_id: fragility_curves for curve_id in unique_curves
-                    if any(col[0] == curve_id for col in fragility_curves.columns)}
+    multi_curves = {
+        curve_id: fragility_curves
+        for curve_id in unique_curves
+        if any(col[0] == curve_id for col in fragility_curves.columns)
+    }
 
     # Max damage values (min / mean / max)
     asset_maxdam = INFRASTRUCTURE_DAMAGE_VALUES.get(asset_type, {})
@@ -168,16 +190,16 @@ def _build_curves_from_parameters(
         curve_id, damage_state = col
         if curve_id not in unique_curves:
             continue
-        if str(damage_state).endswith("_beta"):
-            continue
 
-        beta_col = (curve_id, f"{damage_state}_beta")
-        if beta_col not in param_df.columns:
-            continue
-
-        # Extract median and beta from the column
-        median_val = beta_val = None
         column_data = param_df[col]
+        str_vals = [str(v).lower() for v in column_data if not pd.isna(v)]
+
+        # Skip columns that don't contain median/beta parameters
+        if not (any("median" in v for v in str_vals) and any("beta" in v for v in str_vals)):
+            continue
+
+        # Extract median and beta values
+        median_val = beta_val = None
         for i, cell in enumerate(column_data):
             if pd.isna(cell):
                 continue
@@ -222,22 +244,11 @@ def _load_precomputed_curves(
         data_cols.values[valid], columns=data_cols.columns
     ).apply(pd.to_numeric, errors="coerce")
 
-    # Keep only relevant curves
     keep_cols = [col for col in data_vals.columns if col[0] in unique_curves]
     data_vals = data_vals[keep_cols]
     data_vals.index = pga_values
 
     return data_vals.ffill().fillna(0)
-
-
-def _standardise_damage_states(fragility_curves: pd.DataFrame) -> pd.DataFrame:
-    """Rename damage state columns to standardised names."""
-    new_cols = [
-        (curve_id, DAMAGE_STATE_MAP.get(ds, ds.lower()))
-        for curve_id, ds in fragility_curves.columns
-    ]
-    fragility_curves.columns = pd.MultiIndex.from_tuples(new_cols)
-    return fragility_curves
 
 
 # ---------------------------------------------------------------------------

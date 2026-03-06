@@ -9,6 +9,8 @@ For each country + asset type combination:
   3. Save enriched GeoDataFrame to output directory as parquet
 
 Parallelism: one process per country + asset combination.
+             When n_workers > 1, inner RP-level parallelism is disabled
+             to avoid nested process pools and memory exhaustion on Windows.
 
 Usage:
     python run_pipeline.py                          # all countries, all assets
@@ -20,6 +22,7 @@ Usage:
 """
 
 import argparse
+import os
 import sys
 import time
 import traceback
@@ -96,13 +99,11 @@ class Config:
         r"C:\Users\eks510\OneDrive - Vrije Universiteit Amsterdam"
         r"\12_repositories\AssetRisk_PanEU\data\basins_abs_shift_return_periods.parquet"
     )
-    # (basin HYBAS_ID assigned spatially via centroid join)
 
     # Coastal STAC
     COASTAL_STAC_URL = "https://storage.googleapis.com/coclico-data-public/coclico/coclico-stac/catalog.json"
 
     # Curve exclusions per asset type per hazard
-    # Format: {asset_type: {object_type: [curve_ids_to_exclude]}}
     FLOOD_CURVE_EXCLUSIONS = {
         "power": {
             "tower":       ["F1.1","F1.2","F1.3","F1.4","F1.5","F1.6","F1.7","F2.1","F2.2","F2.3","F5.1","F6.1","F6.2"],
@@ -156,9 +157,15 @@ def run_single(
     config: Config,
     hazards: list[str],
     skip_existing: bool,
+    n_outer_workers: int = 1,
 ) -> dict:
     """
     Run the full risk assessment pipeline for one country + asset combination.
+
+    Args:
+        n_outer_workers: Number of outer (country+asset) parallel workers.
+                         When > 1, inner RP-level parallelism is disabled
+                         to avoid nested process pools and memory exhaustion.
 
     Returns a summary dict with status, timing, and basic stats.
     """
@@ -168,9 +175,12 @@ def run_single(
 
     out_path = output_path(config.OUTPUT_DIR, country_iso2, asset_type)
 
-    # Skip if already processed
     if skip_existing and out_path.exists():
         return {"label": label, "status": "skipped", "elapsed": 0}
+
+    # When multiple outer workers are active, disable inner RP-level parallelism
+    # to avoid nested ProcessPoolExecutors exhausting memory on Windows
+    inner_workers = 1 if n_outer_workers > 1 else None
 
     print(f"\n{'='*60}")
     print(f"Processing: {label}")
@@ -184,7 +194,7 @@ def run_single(
             return {"label": label, "status": "no_data", "elapsed": 0}
         print(f"[pipeline] Loaded {len(features)} features")
 
-        # --- 2. Load basin data for future river (shared across hazards) ---
+        # --- 2. Load basin data for future river ---
         basin_data = None
         if "river" in hazards and config.BASIN_DATA_PATH.exists():
             print("[pipeline] Loading basin climate data...")
@@ -203,6 +213,7 @@ def run_single(
                 protection_standard_path=prot_path,
                 basin_data=basin_data,
                 object_curve_exclusions=flood_exclusions,
+                n_workers=inner_workers,
             )
 
         # --- 4. Coastal flood ---
@@ -227,6 +238,7 @@ def run_single(
                 vulnerability_path=config.VULNERABILITY_PATH,
                 asset_type=asset_type,
                 object_curve_exclusions=wind_exclusions,
+                n_workers=inner_workers,
             )
 
         # --- 6. Earthquake ---
@@ -237,6 +249,7 @@ def run_single(
                 hazard_dir=config.EQ_HAZARD_DIR,
                 fragility_path=config.FRAGILITY_PATH,
                 asset_type=asset_type,
+                n_workers=inner_workers,
             )
 
         # --- 7. Save output ---
@@ -303,14 +316,15 @@ def run_pipeline(
         asset_types:   List of internal asset type names to process (None = all available)
         hazards:       List of hazards to run: river, coastal, windstorm, earthquake
                        (None = all)
-        n_workers:     Max parallel workers for country+asset combinations
-                       (None = all CPUs, but see note below)
+        n_workers:     Max parallel workers for country+asset combinations.
+                       When > 1, inner RP-level parallelism is automatically disabled.
+                       Set to 1 for sequential combinations with full inner parallelism.
+                       (None = all CPUs, inner parallelism disabled)
         skip_existing: Skip combinations where output file already exists
     """
     all_hazards = ["river", "coastal", "windstorm", "earthquake"]
     hazards = hazards or all_hazards
 
-    # Discover available data
     if countries is None:
         countries_iso2 = list_available_countries(config.EXPOSURE_DIR)
     else:
@@ -319,13 +333,15 @@ def run_pipeline(
     if asset_types is None:
         asset_types = list_available_asset_types(config.EXPOSURE_DIR)
 
-    # Build work items
     work_items = [
         (country, asset)
         for country in countries_iso2
         for asset in asset_types
         if (config.EXPOSURE_DIR / _folder(asset) / f"{_folder(asset)}_{country}.parquet").exists()
     ]
+
+    # Resolve effective outer worker count
+    effective_workers = n_workers if n_workers is not None else os.cpu_count()
 
     print(f"\n{'='*60}")
     print(f"MIRACA RISK PIPELINE")
@@ -335,7 +351,8 @@ def run_pipeline(
     print(f"Asset types: {asset_types}")
     print(f"Hazards:     {hazards}")
     print(f"Work items:  {len(work_items)}")
-    print(f"Workers:     {n_workers or 'all CPUs'}")
+    print(f"Workers:     {effective_workers} outer"
+          f" / {'1 (disabled)' if effective_workers > 1 else 'all CPUs'} inner")
     print(f"Output dir:  {config.OUTPUT_DIR}")
     print(f"{'='*60}\n")
 
@@ -345,16 +362,12 @@ def run_pipeline(
 
     t_start = time.time()
 
-    # NOTE: We use ProcessPoolExecutor at the country+asset level.
-    # Each hazard module also uses ProcessPoolExecutor internally for return periods.
-    # To avoid nested process pools (which can cause issues on Windows),
-    # set n_workers=1 here if you want inner parallelism, or set it higher
-    # and let each worker run hazard RPs sequentially.
     worker_fn = functools.partial(
         _run_single_unpacked,
         config=config,
         hazards=hazards,
         skip_existing=skip_existing,
+        n_outer_workers=effective_workers,
     )
 
     results = []
@@ -397,22 +410,22 @@ def run_pipeline(
             if r["status"] == "error":
                 print(f"    - {r['label']}: {r.get('error', '?')}")
 
-    # Save run log
     log_path = config.OUTPUT_DIR / f"pipeline_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(results).to_csv(log_path, index=False)
     print(f"\n  Run log saved to: {log_path}")
 
 
-def _run_single_unpacked(country, asset, config, hazards, skip_existing):
+def _run_single_unpacked(country, asset, config, hazards, skip_existing, n_outer_workers):
     """Unpacked wrapper for ProcessPoolExecutor (needs top-level picklable function)."""
-    return run_single(country, asset, config, hazards, skip_existing)
+    return run_single(country, asset, config, hazards, skip_existing, n_outer_workers)
 
 
 def _folder(asset_type: str) -> str:
     """Get folder name from internal asset type (via data_loader mapping)."""
     from data_loader import to_folder_asset
     return to_folder_asset(asset_type)
+
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -439,8 +452,10 @@ def parse_args():
     )
     parser.add_argument(
         "--workers", type=int, default=None,
-        help="Number of parallel workers for country+asset combinations "
-             "(default: all CPUs). Set to 1 to disable outer parallelism."
+        help="Number of parallel workers for country+asset combinations. "
+             "When > 1, inner RP-level parallelism is disabled automatically. "
+             "Set to 1 for sequential combinations with full inner parallelism. "
+             "(default: all CPUs, inner parallelism disabled)"
     )
     parser.add_argument(
         "--skip-existing", action="store_true",
@@ -450,13 +465,10 @@ def parse_args():
 
 
 if __name__ == "__main__":
-    # Required on Windows when using ProcessPoolExecutor / multiprocessing
     import multiprocessing
-
     multiprocessing.freeze_support()
 
     args = parse_args()
-
     cfg = Config()
 
     if cfg.EXPOSURE_DIR.exists():
@@ -477,4 +489,3 @@ if __name__ == "__main__":
         n_workers=args.workers,
         skip_existing=args.skip_existing,
     )
-

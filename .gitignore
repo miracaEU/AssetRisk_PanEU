@@ -4,6 +4,7 @@ data/
 figures/
 results/
 book/floodProtection_v2019_paper3.tif
+book/NUTS_RG_20M_2024_3035.geosjon
 src/disEnsemble_highExtremes_*.nc
 src/hybas_eu_lev08_v1c.*
 src/basins_*.parquet
@@ -12,4 +13,3 @@ src/*.xlsx
 src/*.parquet
 src/*.geojson
 src/logs/
-book/wildfire_analysis_results/

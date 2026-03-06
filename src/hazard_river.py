@@ -6,7 +6,7 @@ River flood risk assessment module.
 Takes a pre-loaded exposure GeoDataFrame and returns it enriched with:
   - EAD_river, EAD_river_min, EAD_river_max
   - EAD_river_1.5C, EAD_river_1.5C_min, EAD_river_1.5C_max  (+ 2.0C, 3.0C, 4.0C)
-  - exposure_flood_100  (length / area / count at RP100)
+  - exposure_river_100  (length / area / count at RP100)
 
 Depends on:
   - risk_integration.py  (EAD integration, exposure metrics, climate adjustment)
@@ -424,7 +424,7 @@ def assess_river(
           EAD_river, EAD_river_min, EAD_river_max
           EAD_river_1.5C, EAD_river_1.5C_min, EAD_river_1.5C_max (if basin_data given)
           ... (2.0C, 3.0C, 4.0C)
-          exposure_flood_100
+          exposure_river_100
     """
     t0 = time.time()
     print(f"[river] Starting assessment for {asset_type} "
@@ -483,7 +483,7 @@ def assess_river(
     # --- 6. Exposure metric at RP100 ---
     if RIVER_EXPOSURE_RP in hazard_dict:
         print(f"[river] Computing exposure metric at RP{RIVER_EXPOSURE_RP}...")
-        features["exposure_flood_100"] = compute_exposure_metric(
+        features["exposure_river_100"] = compute_exposure_metric(
             features=features,
             hazard=hazard_dict[RIVER_EXPOSURE_RP],
             reference_rp=RIVER_EXPOSURE_RP,
@@ -492,7 +492,7 @@ def assess_river(
         ).values
     else:
         print(f"[river] RP{RIVER_EXPOSURE_RP} not available, skipping exposure metric.")
-        features["exposure_flood_100"] = np.nan
+        features["exposure_river_100"] = np.nan
 
     # --- 7. Future climate scenarios ---
     if basin_data is not None:

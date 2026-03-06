@@ -273,7 +273,7 @@ def _run_coastal_scenario(
     aggregates by (osm_id, LAU), then integrates to EAD.
 
     Args:
-        compute_exposure: If True, also compute exposure_flood_100 from RP100 tiles.
+        compute_exposure: If True, also compute exposure_coastal_100 from RP100 tiles.
 
     Returns:
         (enriched features, exposure Series or None)
@@ -418,7 +418,7 @@ def assess_coastal(
     damage by (osm_id, LAU) to correctly handle cross-LAU OSM features.
 
     Output columns:
-      Baseline:  EAD_coastal, EAD_coastal_min, EAD_coastal_max, exposure_flood_100
+      Baseline:  EAD_coastal, EAD_coastal_min, EAD_coastal_max, exposure_coastal_100
       Future:    EAD_coastal_2050_SSP245, ..._min, ..._max  (x4 scenarios)
 
     Args:
@@ -471,14 +471,14 @@ def assess_coastal(
 
         # Attach exposure metric from baseline scenario
         if is_baseline and exposure is not None:
-            if "exposure_flood_100" not in features.columns:
-                features["exposure_flood_100"] = exposure.reindex(features.index).values
+            if "exposure_coastal_100" not in features.columns:
+                features["exposure_coastal_100"] = exposure.reindex(features.index).values
 
         gc.collect()
 
     # Fallback if exposure metric was never set (e.g. no baseline tiles found)
-    if "exposure_flood_100" not in features.columns:
-        features["exposure_flood_100"] = np.nan
+    if "exposure_coastal_100" not in features.columns:
+        features["exposure_coastal_100"] = np.nan
 
     elapsed = time.time() - t0
     print(f"\n[coastal] All scenarios completed in {elapsed/60:.1f} min")
