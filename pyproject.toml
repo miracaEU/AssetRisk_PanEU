@@ -28,3 +28,8 @@ dependencies = [
 
 [tool.uv.sources]
 damagescanner = { path = "../DamageScanner", editable = true }
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.6",
+]

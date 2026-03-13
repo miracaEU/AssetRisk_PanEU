@@ -19,17 +19,16 @@ They are responsible for:
 import numpy as np
 import pandas as pd
 import geopandas as gpd
-from pathlib import Path
 from typing import Optional
 from scipy.interpolate import interp1d
 
 from damagescanner.core import VectorScanner, VectorExposure
-from damagescanner.vector import _get_cell_area_m2
 
 
 # ---------------------------------------------------------------------------
 # Damage calculation per return period
 # ---------------------------------------------------------------------------
+
 
 def compute_damage_per_rp(
     features: gpd.GeoDataFrame,
@@ -62,7 +61,7 @@ def compute_damage_per_rp(
     """
 
     features.geometry.iloc[0].geom_type
-    
+
     result = VectorScanner(
         hazard_file=hazard,
         feature_file=features,
@@ -82,6 +81,7 @@ def compute_damage_per_rp(
 # ---------------------------------------------------------------------------
 # EAD integration
 # ---------------------------------------------------------------------------
+
 
 def integrate_ead(
     damages_by_rp: dict[int, dict],
@@ -139,13 +139,19 @@ def _apply_protection_standard(
 
     # Interpolate damage at the protection standard RP if not already present
     if protection_standard not in sorted_rps:
-        interp_damage = _interpolate_damage(sorted_rps, sorted_damages, protection_standard)
+        interp_damage = _interpolate_damage(
+            sorted_rps, sorted_damages, protection_standard
+        )
         idx = int(np.searchsorted(sorted_rps, protection_standard))
         sorted_rps = sorted_rps[:idx] + [protection_standard] + sorted_rps[idx:]
         sorted_damages = sorted_damages[:idx] + [interp_damage] + sorted_damages[idx:]
 
     # Keep only RPs >= protection standard
-    filtered = [(rp, d) for rp, d in zip(sorted_rps, sorted_damages) if rp >= protection_standard]
+    filtered = [
+        (rp, d)
+        for rp, d in zip(sorted_rps, sorted_damages)
+        if rp >= protection_standard
+    ]
     if not filtered:
         return [], []
 
@@ -173,6 +179,7 @@ def _interpolate_damage(
 # Collect per-asset EAD across all return periods
 # ---------------------------------------------------------------------------
 
+
 def collect_ead_per_asset(
     rp_results: dict[int, gpd.GeoDataFrame],
     features: gpd.GeoDataFrame,
@@ -194,38 +201,42 @@ def collect_ead_per_asset(
         DataFrame with columns [EAD, EAD_min, EAD_max] indexed like features
     """
     sorted_rps = sorted(rp_results.keys())
-    n          = len(features)
+    n = len(features)
 
     # Pre-extract all damage values into (n_features × n_rps) numpy matrices.
     # One vectorised .reindex per RP instead of n_features × n_rps .loc calls.
     mean_mat = np.zeros((n, len(sorted_rps)))
-    min_mat  = np.zeros((n, len(sorted_rps)))
-    max_mat  = np.zeros((n, len(sorted_rps)))
+    min_mat = np.zeros((n, len(sorted_rps)))
+    max_mat = np.zeros((n, len(sorted_rps)))
 
     for j, rp in enumerate(sorted_rps):
-        aligned      = rp_results[rp].reindex(features.index)
+        aligned = rp_results[rp].reindex(features.index)
         mean_mat[:, j] = aligned[damage_col_mean].fillna(0).to_numpy()
-        min_mat[:, j]  = aligned[damage_col_min].fillna(0).to_numpy()
-        max_mat[:, j]  = aligned[damage_col_max].fillna(0).to_numpy()
+        min_mat[:, j] = aligned[damage_col_min].fillna(0).to_numpy()
+        max_mat[:, j] = aligned[damage_col_max].fillna(0).to_numpy()
 
     ead_mean = np.zeros(n)
-    ead_min  = np.zeros(n)
-    ead_max  = np.zeros(n)
+    ead_min = np.zeros(n)
+    ead_max = np.zeros(n)
 
     for i, idx in enumerate(features.index):
-        prot = float(protection_standards.get(idx, 0)) if protection_standards is not None else 0.0
+        prot = (
+            float(protection_standards.get(idx, 0))
+            if protection_standards is not None
+            else 0.0
+        )
         damages_by_rp = {
             rp: {
                 "mean": mean_mat[i, j],
-                "min":  min_mat[i, j],
-                "max":  max_mat[i, j],
+                "min": min_mat[i, j],
+                "max": max_mat[i, j],
             }
             for j, rp in enumerate(sorted_rps)
         }
-        m, lo, hi  = integrate_ead(damages_by_rp, protection_standard=prot)
+        m, lo, hi = integrate_ead(damages_by_rp, protection_standard=prot)
         ead_mean[i] = m
-        ead_min[i]  = lo
-        ead_max[i]  = hi
+        ead_min[i] = lo
+        ead_max[i] = hi
 
     return pd.DataFrame(
         {"EAD": ead_mean, "EAD_min": ead_min, "EAD_max": ead_max},
@@ -236,6 +247,7 @@ def collect_ead_per_asset(
 # ---------------------------------------------------------------------------
 # Exposure metrics (geometry-aware)
 # ---------------------------------------------------------------------------
+
 
 def compute_exposure_metric(
     features: gpd.GeoDataFrame,
@@ -279,7 +291,9 @@ def compute_exposure_metric(
 
     # Mean hazard value per asset
     exposed_features["_mean_hazard"] = exposed_features["values"].apply(
-        lambda v: float(np.mean(v)) if hasattr(v, "__len__") and len(v) > 0 else float(v or 0)
+        lambda v: (
+            float(np.mean(v)) if hasattr(v, "__len__") and len(v) > 0 else float(v or 0)
+        )
     )
 
     exposed = exposed_features[exposed_features["_mean_hazard"] > pga_threshold].copy()
@@ -311,6 +325,7 @@ def compute_exposure_metric(
 # Climate return period adjustment (future river)
 # ---------------------------------------------------------------------------
 
+
 def adjust_return_periods_climate(
     original_rps: list[int],
     protection_standard: float,
@@ -335,9 +350,15 @@ def adjust_return_periods_climate(
         Tuple of (adjusted_rps, adjusted_protection_standard)
     """
     # Read anchor point new RPs, fall back to original if NaN
-    new_rp_10  = _safe_rp(basin_changes.get(f"10_rp_change_{temp_scenario}"),  10,   1.0,  99.0)
-    new_rp_100 = _safe_rp(basin_changes.get(f"100_rp_change_{temp_scenario}"), 100,  1.0, 499.0)
-    new_rp_500 = _safe_rp(basin_changes.get(f"500_rp_change_{temp_scenario}"), 500,  1.0, 1000.0)
+    new_rp_10 = _safe_rp(
+        basin_changes.get(f"10_rp_change_{temp_scenario}"), 10, 1.0, 99.0
+    )
+    new_rp_100 = _safe_rp(
+        basin_changes.get(f"100_rp_change_{temp_scenario}"), 100, 1.0, 499.0
+    )
+    new_rp_500 = _safe_rp(
+        basin_changes.get(f"500_rp_change_{temp_scenario}"), 500, 1.0, 1000.0
+    )
 
     interp_func = interp1d(
         [10, 100, 500],
@@ -398,31 +419,39 @@ def collect_ead_climate_scenarios(
         for each temperature scenario, indexed like features
     """
     sorted_rps = sorted(rp_results.keys())
-    n          = len(features)
+    n = len(features)
 
     # Pre-extract damage matrices once — shared across all temperature scenarios
     mean_mat = np.zeros((n, len(sorted_rps)))
-    min_mat  = np.zeros((n, len(sorted_rps)))
-    max_mat  = np.zeros((n, len(sorted_rps)))
+    min_mat = np.zeros((n, len(sorted_rps)))
+    max_mat = np.zeros((n, len(sorted_rps)))
 
     for j, rp in enumerate(sorted_rps):
-        aligned        = rp_results[rp].reindex(features.index)
+        aligned = rp_results[rp].reindex(features.index)
         mean_mat[:, j] = aligned[damage_col_mean].fillna(0).to_numpy()
-        min_mat[:, j]  = aligned[damage_col_min].fillna(0).to_numpy()
-        max_mat[:, j]  = aligned[damage_col_max].fillna(0).to_numpy()
+        min_mat[:, j] = aligned[damage_col_min].fillna(0).to_numpy()
+        max_mat[:, j] = aligned[damage_col_max].fillna(0).to_numpy()
 
     output = {}
 
     for temp_code, temp_label in zip(temp_scenarios, temp_labels):
         ead_mean = np.zeros(n)
-        ead_min  = np.zeros(n)
-        ead_max  = np.zeros(n)
+        ead_min = np.zeros(n)
+        ead_max = np.zeros(n)
 
         for i, idx in enumerate(features.index):
-            prot = float(protection_standards.get(idx, 0)) if protection_standards is not None else 0.0
+            prot = (
+                float(protection_standards.get(idx, 0))
+                if protection_standards is not None
+                else 0.0
+            )
 
             basin_id = basin_ids.get(idx)
-            if basin_id is not None and not pd.isna(basin_id) and basin_id in basin_data.index:
+            if (
+                basin_id is not None
+                and not pd.isna(basin_id)
+                and basin_id in basin_data.index
+            ):
                 basin_row = basin_data.loc[basin_id]
             else:
                 basin_row = pd.Series(dtype=float)
@@ -434,18 +463,18 @@ def collect_ead_climate_scenarios(
             damages_by_rp = {
                 new_rp: {
                     "mean": mean_mat[i, j],
-                    "min":  min_mat[i, j],
-                    "max":  max_mat[i, j],
+                    "min": min_mat[i, j],
+                    "max": max_mat[i, j],
                 }
                 for j, (orig_rp, new_rp) in enumerate(zip(sorted_rps, adjusted_rps))
             }
 
-            m, lo, hi  = integrate_ead(damages_by_rp, protection_standard=adjusted_prot)
+            m, lo, hi = integrate_ead(damages_by_rp, protection_standard=adjusted_prot)
             ead_mean[i] = m
-            ead_min[i]  = lo
-            ead_max[i]  = hi
+            ead_min[i] = lo
+            ead_max[i] = hi
 
-        output[f"EAD_river_{temp_label}"]     = ead_mean
+        output[f"EAD_river_{temp_label}"] = ead_mean
         output[f"EAD_river_{temp_label}_min"] = ead_min
         output[f"EAD_river_{temp_label}_max"] = ead_max
 

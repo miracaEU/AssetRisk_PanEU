@@ -27,8 +27,6 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import geopandas as gpd
-import pandas as pd
-import yaml
 
 from exposure_utils import (
     load_config,
@@ -46,15 +44,58 @@ warnings.simplefilter(action="ignore", category=RuntimeWarning)
 # Defaults
 # ---------------------------------------------------------------------------
 
-DEFAULT_COUNTRIES = ["ALB", "AUT", "BEL", "BGR", "BIH", "CHE", "CYP", "CZE",
-                     "DEU", "DNK", "EST", "ESP", "FIN", "FRA", "GRC", "HRV",
-                     "HUN", "IRL", "ISL", "ITA", "LIE", "LTU", "LUX", "LVA",
-                     "MKD", "MLT", "MNE", "NLD", "NOR", "POL", "PRT", "ROU",
-                     "SRB", "SVK", "SVN", "SWE", "XKO"]
+DEFAULT_COUNTRIES = [
+    "ALB",
+    "AUT",
+    "BEL",
+    "BGR",
+    "BIH",
+    "CHE",
+    "CYP",
+    "CZE",
+    "DEU",
+    "DNK",
+    "EST",
+    "ESP",
+    "FIN",
+    "FRA",
+    "GRC",
+    "HRV",
+    "HUN",
+    "IRL",
+    "ISL",
+    "ITA",
+    "LIE",
+    "LTU",
+    "LUX",
+    "LVA",
+    "MKD",
+    "MLT",
+    "MNE",
+    "NLD",
+    "NOR",
+    "POL",
+    "PRT",
+    "ROU",
+    "SRB",
+    "SVK",
+    "SVN",
+    "SWE",
+    "XKO",
+]
 
 DEFAULT_ASSETS = [
-    "roads", "main_roads", "rail", "air", "telecom",
-    "education", "healthcare", "power", "gas", "oil", "ports",
+    "roads",
+    "main_roads",
+    "rail",
+    "air",
+    "telecom",
+    "education",
+    "healthcare",
+    "power",
+    "gas",
+    "oil",
+    "ports",
 ]
 
 DEFAULT_HAZARDS = ["heat", "wildfire", "landslide"]
@@ -62,6 +103,7 @@ DEFAULT_HAZARDS = ["heat", "wildfire", "landslide"]
 # ---------------------------------------------------------------------------
 # Single combination runner
 # ---------------------------------------------------------------------------
+
 
 def run_single(
     country_iso3: str,
@@ -108,7 +150,9 @@ def run_single(
     # a unique identifier. We synthesise a feature_id string for internal use and restore
     # the original columns in the output.
     if "LAU" in features.columns:
-        features["feature_id"] = features["osm_id"].astype(str) + "__" + features["LAU"].astype(str)
+        features["feature_id"] = (
+            features["osm_id"].astype(str) + "__" + features["LAU"].astype(str)
+        )
     else:
         features["feature_id"] = features["osm_id"].astype(str)
 
@@ -116,7 +160,9 @@ def run_single(
     n_before = len(features)
     features = features.drop_duplicates(subset="feature_id").reset_index(drop=True)
     if len(features) < n_before:
-        print(f"[{tag}] Deduplicated {n_before - len(features)} rows on (osm_id, LAU) ({len(features)} remain)")
+        print(
+            f"[{tag}] Deduplicated {n_before - len(features)} rows on (osm_id, LAU) ({len(features)} remain)"
+        )
 
     # Expose feature_id as osm_id to the assessment modules (they use osm_id as row key)
     features["_osm_id_orig"] = features["osm_id"]
@@ -133,12 +179,19 @@ def run_single(
         else:
             try:
                 enriched = assess_landslide(features, landslide_path, asset_type)
-                for col in ["landslide_min", "landslide_avg", "landslide_max",
-                            "landslide_exposure", "landslide_max_cat"]:
+                for col in [
+                    "landslide_min",
+                    "landslide_avg",
+                    "landslide_max",
+                    "landslide_exposure",
+                    "landslide_max_cat",
+                ]:
                     if col in enriched.columns:
                         all_columns[col] = enriched.set_index("osm_id")[col]
             except Exception:
-                print(f"[{tag}] ERROR in landslide assessment:\n{traceback.format_exc()}")
+                print(
+                    f"[{tag}] ERROR in landslide assessment:\n{traceback.format_exc()}"
+                )
 
     # ── Heat ──────────────────────────────────────────────────────────────
     if "heat" in hazards:
@@ -156,13 +209,17 @@ def run_single(
     if "wildfire" in hazards:
         wildfire_dir = config.get("wildfire_hazard_dir")
         if not wildfire_dir or not Path(wildfire_dir).exists():
-            print(f"[{tag}] WARNING: wildfire_hazard_dir not set or not found — skipping")
+            print(
+                f"[{tag}] WARNING: wildfire_hazard_dir not set or not found — skipping"
+            )
         else:
             try:
                 wildfire_cols = assess_wildfire(features, wildfire_dir, asset_type)
                 all_columns.update(wildfire_cols)
             except Exception:
-                print(f"[{tag}] ERROR in wildfire assessment:\n{traceback.format_exc()}")
+                print(
+                    f"[{tag}] ERROR in wildfire assessment:\n{traceback.format_exc()}"
+                )
 
     if not all_columns:
         print(f"[{tag}] No exposure results generated — skipping output")
@@ -210,6 +267,7 @@ def _run_single_unpacked(args: tuple) -> tuple[str, str, str]:
 # Pipeline runner
 # ---------------------------------------------------------------------------
 
+
 def run_pipeline(
     countries: list[str] | None = None,
     assets: list[str] | None = None,
@@ -232,27 +290,29 @@ def run_pipeline(
     config = load_config(config_path)
 
     countries = [c.upper() for c in (countries or DEFAULT_COUNTRIES)]
-    assets    = assets or DEFAULT_ASSETS
-    hazards   = [h.lower() for h in (hazards or DEFAULT_HAZARDS)]
+    assets = assets or DEFAULT_ASSETS
+    hazards = [h.lower() for h in (hazards or DEFAULT_HAZARDS)]
 
     combos = [(c, a) for c in countries for a in assets]
     effective_workers = workers if workers and workers > 1 else 1
 
-    print(f"\n{'='*60}")
-    print(f"MIRACA Exposure Pipeline")
+    print(f"\n{'=' * 60}")
+    print("MIRACA Exposure Pipeline")
     print(f"  Countries : {countries}")
     print(f"  Assets    : {assets}")
     print(f"  Hazards   : {hazards}")
     print(f"  Workers   : {effective_workers}")
     print(f"  Combos    : {len(combos)}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     results = {}
 
     if effective_workers == 1:
         # Sequential — full inner parallelism available per hazard module
         for country, asset in combos:
-            c, a, status = run_single(country, asset, config, hazards, n_outer_workers=1)
+            c, a, status = run_single(
+                country, asset, config, hazards, n_outer_workers=1
+            )
             results[(c, a)] = status
     else:
         # Outer parallelism across country×asset combinations
@@ -277,18 +337,18 @@ def run_pipeline(
 
     # Summary
     elapsed = time.time() - t_start
-    ok      = sum(1 for s in results.values() if s == "ok")
+    ok = sum(1 for s in results.values() if s == "ok")
     skipped = sum(1 for s in results.values() if s == "skipped")
-    errors  = sum(1 for s in results.values() if s == "error")
+    errors = sum(1 for s in results.values() if s == "error")
     no_feat = sum(1 for s in results.values() if s == "no_features")
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Pipeline complete in {elapsed:.1f}s")
     print(f"  OK          : {ok}")
     print(f"  Skipped     : {skipped}")
     print(f"  No features : {no_feat}")
     print(f"  Errors      : {errors}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     if errors:
         failed = [f"{c}/{a}" for (c, a), s in results.items() if s == "error"]
@@ -299,34 +359,44 @@ def run_pipeline(
 # CLI entry point
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="MIRACA Exposure Pipeline — heat, wildfire, landslide"
     )
     parser.add_argument(
-        "--countries", nargs="+", default=None,
-        help="ISO3 country codes (default: all European)"
+        "--countries",
+        nargs="+",
+        default=None,
+        help="ISO3 country codes (default: all European)",
     )
     parser.add_argument(
-        "--assets", nargs="+", default=None,
-        help="Asset types to process (default: all)"
+        "--assets",
+        nargs="+",
+        default=None,
+        help="Asset types to process (default: all)",
     )
     parser.add_argument(
-        "--hazards", nargs="+", default=None,
+        "--hazards",
+        nargs="+",
+        default=None,
         choices=["heat", "wildfire", "landslide"],
-        help="Hazards to run (default: heat wildfire landslide)"
+        help="Hazards to run (default: heat wildfire landslide)",
     )
     parser.add_argument(
-        "--config", default="config.yml",
-        help="Path to YAML config file (default: config.yml)"
+        "--config",
+        default="config.yml",
+        help="Path to YAML config file (default: config.yml)",
     )
     parser.add_argument(
-        "--workers", type=int, default=None,
+        "--workers",
+        type=int,
+        default=None,
         help=(
             "Number of parallel country×asset workers. "
             "1 = sequential with full inner parallelism (default). "
             "N>1 = N outer workers, inner parallelism disabled."
-        )
+        ),
     )
 
     args = parser.parse_args()

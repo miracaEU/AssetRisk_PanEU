@@ -33,6 +33,7 @@ warnings.simplefilter(action="ignore", category=RuntimeWarning)
 # Hazard loading
 # ---------------------------------------------------------------------------
 
+
 def load_landslide(
     landslide_path: Union[str, Path],
     bounds_3035: Optional[tuple[float, float, float, float]] = None,
@@ -61,6 +62,7 @@ def load_landslide(
 # Vectorised susceptibility statistics
 # ---------------------------------------------------------------------------
 
+
 def _compute_susceptibility_stats(
     exposed: gpd.GeoDataFrame,
     cell_area_m2: float,
@@ -83,16 +85,18 @@ def _compute_susceptibility_stats(
     records = []
     for idx, row in exposed.iterrows():
         vals = np.asarray(row["values"], dtype=float)
-        cov  = np.asarray(row["coverage"], dtype=float)
+        cov = np.asarray(row["coverage"], dtype=float)
 
         if len(vals) == 0 or np.all(np.isnan(vals)):
-            records.append({
-                "min_susceptibility": np.nan,
-                "avg_susceptibility": np.nan,
-                "max_susceptibility": np.nan,
-                "total_exposure":     0.0,
-                "max_cat_exposure":   0.0,
-            })
+            records.append(
+                {
+                    "min_susceptibility": np.nan,
+                    "avg_susceptibility": np.nan,
+                    "max_susceptibility": np.nan,
+                    "total_exposure": 0.0,
+                    "max_cat_exposure": 0.0,
+                }
+            )
             continue
 
         valid = ~np.isnan(vals)
@@ -106,19 +110,25 @@ def _compute_susceptibility_stats(
         else:
             c_scaled = c
 
-        total   = float(c_scaled.sum())
-        max_v   = float(v.max())
-        min_v   = float(v.min())
-        avg_v   = float(np.average(v, weights=c_scaled)) if c_scaled.sum() > 0 else float(v.mean())
+        total = float(c_scaled.sum())
+        max_v = float(v.max())
+        min_v = float(v.min())
+        avg_v = (
+            float(np.average(v, weights=c_scaled))
+            if c_scaled.sum() > 0
+            else float(v.mean())
+        )
         max_cat = float(c_scaled[v == max_v].sum())
 
-        records.append({
-            "min_susceptibility": min_v,
-            "avg_susceptibility": avg_v,
-            "max_susceptibility": max_v,
-            "total_exposure":     total,
-            "max_cat_exposure":   max_cat,
-        })
+        records.append(
+            {
+                "min_susceptibility": min_v,
+                "avg_susceptibility": avg_v,
+                "max_susceptibility": max_v,
+                "total_exposure": total,
+                "max_cat_exposure": max_cat,
+            }
+        )
 
     return pd.DataFrame(records, index=exposed.index)
 
@@ -126,6 +136,7 @@ def _compute_susceptibility_stats(
 # ---------------------------------------------------------------------------
 # Main assessment function
 # ---------------------------------------------------------------------------
+
 
 def assess_landslide(
     features: gpd.GeoDataFrame,
@@ -146,7 +157,9 @@ def assess_landslide(
           landslide_exposure, landslide_max_cat
     """
     t0 = time.time()
-    print(f"[landslide] Starting assessment for {asset_type} ({len(features)} features)")
+    print(
+        f"[landslide] Starting assessment for {asset_type} ({len(features)} features)"
+    )
 
     # Reproject features to EPSG:3035 to match raster
     features_3035 = features.to_crs(3035)
@@ -168,7 +181,7 @@ def assess_landslide(
     cell_area_m2 = abs(float(res[0])) * abs(float(res[1]))
 
     # Run overlay
-    print(f"[landslide] Running overlay...")
+    print("[landslide] Running overlay...")
     exposed, _, _, _ = VectorExposure(
         hazard_file=landslide_ds,
         feature_file=features_3035,
@@ -177,16 +190,16 @@ def assess_landslide(
     )
 
     # Compute statistics
-    print(f"[landslide] Computing susceptibility statistics...")
+    print("[landslide] Computing susceptibility statistics...")
     stats = _compute_susceptibility_stats(exposed, cell_area_m2)
 
     # Merge back to original features (preserving original CRS)
     features = features.copy()
-    features["landslide_min"]      = stats["min_susceptibility"].values
-    features["landslide_avg"]      = stats["avg_susceptibility"].values
-    features["landslide_max"]      = stats["max_susceptibility"].values
+    features["landslide_min"] = stats["min_susceptibility"].values
+    features["landslide_avg"] = stats["avg_susceptibility"].values
+    features["landslide_max"] = stats["max_susceptibility"].values
     features["landslide_exposure"] = stats["total_exposure"].values
-    features["landslide_max_cat"]  = stats["max_cat_exposure"].values
+    features["landslide_max_cat"] = stats["max_cat_exposure"].values
 
     elapsed = time.time() - t0
     n_exposed = (features["landslide_max"] > 0).sum()

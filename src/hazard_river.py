@@ -26,7 +26,6 @@ from tqdm import tqdm
 from typing import Optional, Union
 
 from damagescanner.core import VectorExposure
-from damagescanner.vector import _get_cell_area_m2
 from constants import (
     DICT_CIS_VULNERABILITY_FLOOD,
     INFRASTRUCTURE_DAMAGE_VALUES,
@@ -51,16 +50,20 @@ RIVER_HAZARD_COL = "band_data"
 RIVER_EXPOSURE_RP = 100  # reference return period for exposure metric
 
 # Temperature scenarios for future river
-TEMP_CODES  = ("15", "20", "30", "40")
+TEMP_CODES = ("15", "20", "30", "40")
 TEMP_LABELS = ("1.5C", "2.0C", "3.0C", "4.0C")
+
 
 def _worker_init():
     import sys
+
     sys.excepthook = lambda *args: None
+
 
 # ---------------------------------------------------------------------------
 # Vulnerability curve preparation
 # ---------------------------------------------------------------------------
+
 
 def prepare_flood_curves(
     asset_type: str,
@@ -100,10 +103,7 @@ def prepare_flood_curves(
         damage_values = INFRASTRUCTURE_DAMAGE_VALUES
 
     # Read vulnerability Excel
-    vul_df = pd.read_excel(
-        vulnerability_path,
-        sheet_name="F_Vuln_Depth"
-    ).ffill()
+    vul_df = pd.read_excel(vulnerability_path, sheet_name="F_Vuln_Depth").ffill()
 
     ci_system = vulnerability_dict[asset_type]
 
@@ -138,9 +138,9 @@ def prepare_flood_curves(
         df.columns = ["object_type", "damage"]
         return df
 
-    maxdam_min  = _make_maxdam(0)
+    maxdam_min = _make_maxdam(0)
     maxdam_mean = _make_maxdam(1)
-    maxdam_max  = _make_maxdam(2)
+    maxdam_max = _make_maxdam(2)
 
     return damage_curves, multi_curves, maxdam_mean, maxdam_min, maxdam_max
 
@@ -148,6 +148,7 @@ def prepare_flood_curves(
 # ---------------------------------------------------------------------------
 # Hazard data loading
 # ---------------------------------------------------------------------------
+
 
 def load_river_hazard(
     hazard_dir: Union[str, Path],
@@ -214,6 +215,7 @@ def get_country_bounds_4326(
 # Protection standards
 # ---------------------------------------------------------------------------
 
+
 def load_protection_standards(
     features: gpd.GeoDataFrame,
     protection_standard_path: Union[str, Path],
@@ -240,8 +242,10 @@ def load_protection_standards(
     # Clip to country extent
     bounds = features.to_crs(3035).total_bounds
     prot_map = prot_map.rio.clip_box(
-        minx=bounds[0], miny=bounds[1],
-        maxx=bounds[2], maxy=bounds[3],
+        minx=bounds[0],
+        miny=bounds[1],
+        maxx=bounds[2],
+        maxy=bounds[3],
     )
 
     # Use centroid points for overlay (protection standard is a coarse raster)
@@ -262,14 +266,17 @@ def load_protection_standards(
     design_standards.index = features.index
     design_standards = design_standards.fillna(0).clip(lower=0)
 
-    print(f"  Protection standards loaded. Mean: {design_standards.mean():.0f} yr, "
-          f"Max: {design_standards.max():.0f} yr")
+    print(
+        f"  Protection standards loaded. Mean: {design_standards.mean():.0f} yr, "
+        f"Max: {design_standards.max():.0f} yr"
+    )
     return design_standards
 
 
 # ---------------------------------------------------------------------------
 # Curve filtering (inappropriate curve exclusions)
 # ---------------------------------------------------------------------------
+
 
 def filter_curve_results(
     result_df: gpd.GeoDataFrame,
@@ -304,9 +311,11 @@ def filter_curve_results(
 
     return result_df
 
+
 # ---------------------------------------------------------------------------
 # Per-RP damage worker (used in parallel)
 # ---------------------------------------------------------------------------
+
 
 def _compute_rp_damage(args, common):
     """
@@ -340,14 +349,16 @@ def _compute_rp_damage(args, common):
     # Summarise across curves → mean / min / max damage per asset
     curve_cols = [c for c in multi_curves.keys() if c in result.columns]
     result["damage_mean"] = result[curve_cols].mean(axis=1, skipna=True)
-    result["damage_min"]  = result[curve_cols].min(axis=1, skipna=True)
-    result["damage_max"]  = result[curve_cols].max(axis=1, skipna=True)
+    result["damage_min"] = result[curve_cols].min(axis=1, skipna=True)
+    result["damage_max"] = result[curve_cols].max(axis=1, skipna=True)
 
     return rp, result
+
 
 # ---------------------------------------------------------------------------
 # Main assessment function
 # ---------------------------------------------------------------------------
+
 
 def assign_basin_ids(
     features: gpd.GeoDataFrame,
@@ -368,12 +379,14 @@ def assign_basin_ids(
     # Reproject features centroids to match basin CRS
     basin_crs = "EPSG:3035"
     centroids = features.geometry.to_crs(basin_crs).centroid
-    centroids_gdf = gpd.GeoDataFrame(geometry=centroids, index=features.index, crs=basin_crs)
+    centroids_gdf = gpd.GeoDataFrame(
+        geometry=centroids, index=features.index, crs=basin_crs
+    )
 
     basin_reset = basin_data[["geometry"]].reset_index()
     # The former index is now the first non-geometry column
     id_col = [c for c in basin_reset.columns if c != "geometry"][0]
-    
+
     joined = gpd.sjoin(
         centroids_gdf,
         basin_reset,
@@ -384,8 +397,6 @@ def assign_basin_ids(
     joined = joined[~joined.index.duplicated(keep="first")]
     result = joined[id_col].reindex(features.index)
 
-    matched = result.notna().sum()
-    #print(f"[river] Basin assignment: {matched}/{len(features)} features matched a basin")
     return result
 
 
@@ -427,8 +438,10 @@ def assess_river(
           exposure_river_100
     """
     t0 = time.time()
-    print(f"[river] Starting assessment for {asset_type} "
-          f"({len(features)} features, {len(return_periods)} return periods)")
+    print(
+        f"[river] Starting assessment for {asset_type} "
+        f"({len(features)} features, {len(return_periods)} return periods)"
+    )
 
     # --- 1. Vulnerability curves ---
     damage_curves, multi_curves, maxdam_mean, _, _ = prepare_flood_curves(
@@ -448,22 +461,35 @@ def assess_river(
     # --- 3. Protection standards ---
     protection_standards = None
     if protection_standard_path is not None:
-        protection_standards = load_protection_standards(features, protection_standard_path)
+        protection_standards = load_protection_standards(
+            features, protection_standard_path
+        )
 
     # --- 4. Parallel damage calculation per return period ---
-    common = (features, damage_curves, multi_curves, maxdam_mean,
-              asset_type, object_curve_exclusions)
+    common = (
+        features,
+        damage_curves,
+        multi_curves,
+        maxdam_mean,
+        asset_type,
+        object_curve_exclusions,
+    )
     work_items = [(rp, hazard_dict[rp]) for rp in available_rps]
     worker_fn = functools.partial(_compute_rp_damage, common=common)
 
-    print(f"[river] Running damage calculation across {len(work_items)} return periods...")
-    with concurrent.futures.ProcessPoolExecutor(max_workers=n_workers,
-                                                initializer=_worker_init) as executor:
-        raw_results = list(tqdm(
-            executor.map(worker_fn, work_items),
-            total=len(work_items),
-            desc="River flood RPs",
-        ))
+    print(
+        f"[river] Running damage calculation across {len(work_items)} return periods..."
+    )
+    with concurrent.futures.ProcessPoolExecutor(
+        max_workers=n_workers, initializer=_worker_init
+    ) as executor:
+        raw_results = list(
+            tqdm(
+                executor.map(worker_fn, work_items),
+                total=len(work_items),
+                desc="River flood RPs",
+            )
+        )
 
     # rp_results: {rp: GeoDataFrame with damage_mean/min/max columns}
     rp_results = {rp: df for rp, df in raw_results}
@@ -476,7 +502,7 @@ def assess_river(
         protection_standards=protection_standards,
     )
     features = features.copy()
-    features["EAD_river"]     = ead_df["EAD"].values
+    features["EAD_river"] = ead_df["EAD"].values
     features["EAD_river_min"] = ead_df["EAD_min"].values
     features["EAD_river_max"] = ead_df["EAD_max"].values
 
@@ -513,8 +539,10 @@ def assess_river(
         print("[river] No basin data provided, skipping future climate scenarios.")
 
     elapsed = time.time() - t0
-    print(f"[river] Done in {elapsed:.1f}s. "
-          f"Mean EAD_river: {features['EAD_river'].mean():.2f}, "
-          f"Total: {features['EAD_river'].sum():.2e}")
+    print(
+        f"[river] Done in {elapsed:.1f}s. "
+        f"Mean EAD_river: {features['EAD_river'].mean():.2f}, "
+        f"Total: {features['EAD_river'].sum():.2e}"
+    )
 
     return features

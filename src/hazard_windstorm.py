@@ -36,9 +36,12 @@ from risk_integration import (
 )
 from hazard_river import filter_curve_results
 
+
 def _worker_init():
     import sys
+
     sys.excepthook = lambda *args: None
+
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 warnings.simplefilter(action="ignore", category=RuntimeWarning)
@@ -47,13 +50,14 @@ warnings.simplefilter(action="ignore", category=RuntimeWarning)
 # Constants
 # ---------------------------------------------------------------------------
 
-WIND_RETURN_PERIODS    = [5, 10, 25, 50, 100, 250, 500]
-WIND_HAZARD_COL        = "band_data"
-WIND_EXPOSURE_RP       = 100
+WIND_RETURN_PERIODS = [5, 10, 25, 50, 100, 250, 500]
+WIND_HAZARD_COL = "band_data"
+WIND_EXPOSURE_RP = 100
 WIND_FILENAME_TEMPLATE = "{rp}yr_wisc_nao_0.59.tif"
 
 # Object types to keep for power (wind only damages above-ground elements)
 WIND_POWER_OBJECT_TYPES = {"line", "tower", "catenary_mast", "pole", "minor_line"}
+
 
 def prepare_wind_curves(
     asset_type: str,
@@ -69,10 +73,7 @@ def prepare_wind_curves(
     Returns:
         (damage_curves, multi_curves, maxdam_mean, maxdam_min, maxdam_max)
     """
-    vul_df = pd.read_excel(
-        vulnerability_path,
-        sheet_name="W_Vuln_V10m_3sec"
-    ).ffill()
+    vul_df = pd.read_excel(vulnerability_path, sheet_name="W_Vuln_V10m_3sec").ffill()
 
     ci_system = DICT_CIS_VULNERABILITY_WIND.get(asset_type, {})
     if not ci_system:
@@ -112,12 +113,19 @@ def prepare_wind_curves(
         df.columns = ["object_type", "damage"]
         return df
 
-    return damage_curves, multi_curves, _make_maxdam(1), _make_maxdam(0), _make_maxdam(2)
+    return (
+        damage_curves,
+        multi_curves,
+        _make_maxdam(1),
+        _make_maxdam(0),
+        _make_maxdam(2),
+    )
 
 
 # ---------------------------------------------------------------------------
 # Hazard data loading
 # ---------------------------------------------------------------------------
+
 
 def load_windstorm_hazard(
     hazard_dir: Union[str, Path],
@@ -161,6 +169,7 @@ def load_windstorm_hazard(
 # Per-RP damage worker (used in parallel)
 # ---------------------------------------------------------------------------
 
+
 def _compute_wind_rp_damage(args, common):
     """Worker: compute wind damage for a single return period."""
     rp, hazard = args
@@ -180,8 +189,8 @@ def _compute_wind_rp_damage(args, common):
 
     curve_cols = [c for c in multi_curves.keys() if c in result.columns]
     result["damage_mean"] = result[curve_cols].mean(axis=1, skipna=True)
-    result["damage_min"]  = result[curve_cols].min(axis=1, skipna=True)
-    result["damage_max"]  = result[curve_cols].max(axis=1, skipna=True)
+    result["damage_min"] = result[curve_cols].min(axis=1, skipna=True)
+    result["damage_max"] = result[curve_cols].max(axis=1, skipna=True)
 
     return rp, result
 
@@ -189,6 +198,7 @@ def _compute_wind_rp_damage(args, common):
 # ---------------------------------------------------------------------------
 # Main assessment function
 # ---------------------------------------------------------------------------
+
 
 def assess_windstorm(
     features: gpd.GeoDataFrame,
@@ -224,10 +234,14 @@ def assess_windstorm(
         features_wind = features_wind[
             features_wind["object_type"].isin(WIND_POWER_OBJECT_TYPES)
         ]
-        print(f"[windstorm] Power asset filter: {len(features_wind)}/{len(features)} features retained")
+        print(
+            f"[windstorm] Power asset filter: {len(features_wind)}/{len(features)} features retained"
+        )
 
-    print(f"[windstorm] Starting assessment for {asset_type} "
-          f"({len(features_wind)} features, {len(return_periods)} return periods)")
+    print(
+        f"[windstorm] Starting assessment for {asset_type} "
+        f"({len(features_wind)} features, {len(return_periods)} return periods)"
+    )
 
     # --- 1. Vulnerability curves ---
     try:
@@ -236,7 +250,7 @@ def assess_windstorm(
         )
     except ValueError as e:
         print(f"[windstorm] {e} — skipping windstorm for this asset type.")
-        features["EAD_windstorm"]     = np.nan
+        features["EAD_windstorm"] = np.nan
         features["EAD_windstorm_min"] = np.nan
         features["EAD_windstorm_max"] = np.nan
         features["exposure_wind_100"] = np.nan
@@ -244,12 +258,13 @@ def assess_windstorm(
 
     # --- 2. Hazard data ---
     from hazard_river import get_country_bounds_4326
+
     country_bounds = get_country_bounds_4326(features_wind)
     hazard_dict = load_windstorm_hazard(hazard_dir, return_periods, country_bounds)
 
     if not hazard_dict:
         print("[windstorm] No hazard data found. Returning features unchanged.")
-        features["EAD_windstorm"]     = np.nan
+        features["EAD_windstorm"] = np.nan
         features["EAD_windstorm_min"] = np.nan
         features["EAD_windstorm_max"] = np.nan
         features["exposure_wind_100"] = np.nan
@@ -258,19 +273,30 @@ def assess_windstorm(
     available_rps = sorted(hazard_dict.keys())
 
     # --- 3. Parallel damage calculation per return period ---
-    common = (features_wind, damage_curves, multi_curves, maxdam_mean,
-              asset_type, object_curve_exclusions)
+    common = (
+        features_wind,
+        damage_curves,
+        multi_curves,
+        maxdam_mean,
+        asset_type,
+        object_curve_exclusions,
+    )
     work_items = [(rp, hazard_dict[rp]) for rp in available_rps]
     worker_fn = functools.partial(_compute_wind_rp_damage, common=common)
 
-    print(f"[windstorm] Running damage calculation across {len(work_items)} return periods...")
-    with concurrent.futures.ProcessPoolExecutor(max_workers=n_workers,
-                                                initializer=_worker_init) as executor:
-        raw_results = list(tqdm(
-            executor.map(worker_fn, work_items),
-            total=len(work_items),
-            desc="Windstorm RPs",
-        ))
+    print(
+        f"[windstorm] Running damage calculation across {len(work_items)} return periods..."
+    )
+    with concurrent.futures.ProcessPoolExecutor(
+        max_workers=n_workers, initializer=_worker_init
+    ) as executor:
+        raw_results = list(
+            tqdm(
+                executor.map(worker_fn, work_items),
+                total=len(work_items),
+                desc="Windstorm RPs",
+            )
+        )
 
     rp_results = {rp: df for rp, df in raw_results}
 
@@ -284,11 +310,11 @@ def assess_windstorm(
 
     # Write results back onto the full features GeoDataFrame
     features = features.copy()
-    features["EAD_windstorm"]     = 0.0
+    features["EAD_windstorm"] = 0.0
     features["EAD_windstorm_min"] = 0.0
     features["EAD_windstorm_max"] = 0.0
 
-    features.loc[features_wind.index, "EAD_windstorm"]     = ead_df["EAD"].values
+    features.loc[features_wind.index, "EAD_windstorm"] = ead_df["EAD"].values
     features.loc[features_wind.index, "EAD_windstorm_min"] = ead_df["EAD_min"].values
     features.loc[features_wind.index, "EAD_windstorm_max"] = ead_df["EAD_max"].values
 
@@ -305,12 +331,16 @@ def assess_windstorm(
         features["exposure_wind_100"] = 0.0
         features.loc[features_wind.index, "exposure_wind_100"] = exposure.values
     else:
-        print(f"[windstorm] RP{WIND_EXPOSURE_RP} not available, skipping exposure metric.")
+        print(
+            f"[windstorm] RP{WIND_EXPOSURE_RP} not available, skipping exposure metric."
+        )
         features["exposure_wind_100"] = np.nan
 
     elapsed = time.time() - t0
-    print(f"[windstorm] Done in {elapsed:.1f}s. "
-          f"Mean EAD_windstorm: {features['EAD_windstorm'].mean():.2f}, "
-          f"Total: {features['EAD_windstorm'].sum():.2e}")
+    print(
+        f"[windstorm] Done in {elapsed:.1f}s. "
+        f"Mean EAD_windstorm: {features['EAD_windstorm'].mean():.2f}, "
+        f"Total: {features['EAD_windstorm'].sum():.2e}"
+    )
 
     return features

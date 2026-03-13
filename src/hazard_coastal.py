@@ -20,7 +20,6 @@ import geopandas as gpd
 import xarray as xr
 import shapely
 from pathlib import Path
-from tqdm import tqdm
 from typing import Optional, Union, Generator
 
 import pystac_client
@@ -40,12 +39,16 @@ from hazard_river import (
 warnings.simplefilter(action="ignore", category=FutureWarning)
 warnings.simplefilter(action="ignore", category=RuntimeWarning)
 
+
 def _worker_init():
     import sys
+
     sys.excepthook = lambda *args: None
+
 
 try:
     from pystac_client.warnings import NoConformsTo, FallbackToPystac
+
     warnings.filterwarnings("ignore", category=NoConformsTo)
     warnings.filterwarnings("ignore", category=FallbackToPystac)
 except ImportError:
@@ -55,14 +58,14 @@ except ImportError:
 # Constants
 # ---------------------------------------------------------------------------
 
-COASTAL_STAC_URL       = "https://storage.googleapis.com/coclico-data-public/coclico/coclico-stac/catalog.json"
-COASTAL_COLLECTION     = "cfhp_all"
+COASTAL_STAC_URL = "https://storage.googleapis.com/coclico-data-public/coclico/coclico-stac/catalog.json"
+COASTAL_COLLECTION = "cfhp_all"
 COASTAL_RETURN_PERIODS = [10, 25, 50, 100, 250, 500, 1000]
-COASTAL_EXPOSURE_RP    = 100
+COASTAL_EXPOSURE_RP = 100
 
 # (time_horizon, climate_scenario) → output column label
 COASTAL_SCENARIOS = {
-    ("2010", "None"):   "EAD_coastal",
+    ("2010", "None"): "EAD_coastal",
     ("2050", "SSP245"): "EAD_coastal_2050_SSP245",
     ("2050", "SSP585"): "EAD_coastal_2050_SSP585",
     ("2100", "SSP245"): "EAD_coastal_2100_SSP245",
@@ -78,16 +81,22 @@ _AGG_KEY = ["osm_id", "LAU"]
 # Tile reading
 # ---------------------------------------------------------------------------
 
+
 def _read_tile(href: str) -> Optional[xr.Dataset]:
     """Open a single GeoTIFF tile as an xarray Dataset. Returns None on failure."""
     import rasterio
     import rioxarray  # noqa — registers .rio accessor
+
     try:
         with rasterio.open(href) as src:
-            data  = src.read(1).astype(np.float32)
-            xs    = np.linspace(src.bounds.left,  src.bounds.right, src.width,  endpoint=False)
-            ys    = np.linspace(src.bounds.top,   src.bounds.bottom, src.height, endpoint=False)
-            crs   = src.crs.to_string() if src.crs else "EPSG:4326"
+            data = src.read(1).astype(np.float32)
+            xs = np.linspace(
+                src.bounds.left, src.bounds.right, src.width, endpoint=False
+            )
+            ys = np.linspace(
+                src.bounds.top, src.bounds.bottom, src.height, endpoint=False
+            )
+            crs = src.crs.to_string() if src.crs else "EPSG:4326"
 
         da = xr.DataArray(
             data[np.newaxis],
@@ -106,6 +115,7 @@ def _read_tile(href: str) -> Optional[xr.Dataset]:
 # ---------------------------------------------------------------------------
 # STAC tile streaming — yields (rp, tile) one at a time
 # ---------------------------------------------------------------------------
+
 
 def stream_coastal_tiles(
     features: gpd.GeoDataFrame,
@@ -126,14 +136,14 @@ def stream_coastal_tiles(
         climate_scenario: 'None', 'SSP245', or 'SSP585'
     """
     try:
-        catalog    = pystac_client.Client.open(stac_catalog_url)
+        catalog = pystac_client.Client.open(stac_catalog_url)
         collection = catalog.get_child(id=collection_id)
     except Exception as e:
         print(f"[coastal] Cannot connect to STAC: {e}")
         return
 
     features_3035 = features.to_crs(3035)
-    feature_tree  = shapely.STRtree(features_3035.geometry)
+    feature_tree = shapely.STRtree(features_3035.geometry)
 
     for item in collection.get_items():
         name = "_".join(item.id.split("\\")).split(".")[0]
@@ -165,8 +175,8 @@ def stream_coastal_tiles(
 
             asset = item.assets[asset_key]
             try:
-                proj      = ProjectionExtension.ext(asset)
-                [ring]    = proj.geometry["coordinates"]
+                proj = ProjectionExtension.ext(asset)
+                [ring] = proj.geometry["coordinates"]
                 tile_geom = shapely.Polygon(ring)
             except Exception:
                 continue
@@ -189,6 +199,7 @@ def stream_coastal_tiles(
 # ---------------------------------------------------------------------------
 # Damage extraction from a single tile
 # ---------------------------------------------------------------------------
+
 
 def _damage_from_tile(
     tile: xr.Dataset,
@@ -239,11 +250,11 @@ def _damage_from_tile(
         return None
 
     out = pd.DataFrame(index=result.index)
-    out["osm_id"]       = result.get("osm_id", result.index)
-    out["LAU"]          = result.get("LAU", np.nan)
-    out["damage_mean"]  = result[curve_cols].mean(axis=1, skipna=True).fillna(0)
-    out["damage_min"]   = result[curve_cols].min(axis=1, skipna=True).fillna(0)
-    out["damage_max"]   = result[curve_cols].max(axis=1, skipna=True).fillna(0)
+    out["osm_id"] = result.get("osm_id", result.index)
+    out["LAU"] = result.get("LAU", np.nan)
+    out["damage_mean"] = result[curve_cols].mean(axis=1, skipna=True).fillna(0)
+    out["damage_min"] = result[curve_cols].min(axis=1, skipna=True).fillna(0)
+    out["damage_max"] = result[curve_cols].max(axis=1, skipna=True).fillna(0)
 
     # Drop rows with no damage
     return out[out["damage_mean"] > 0] if len(out) else None
@@ -252,6 +263,7 @@ def _damage_from_tile(
 # ---------------------------------------------------------------------------
 # Per-scenario EAD computation
 # ---------------------------------------------------------------------------
+
 
 def _run_coastal_scenario(
     features: gpd.GeoDataFrame,
@@ -280,14 +292,12 @@ def _run_coastal_scenario(
     """
     print(f"\n[coastal]  → {time_horizon}/{climate_scenario}  →  {col_label}")
 
-
     # Accumulate damage DataFrames per RP — only numbers, no rasters
     rp_damage: dict[int, list[pd.DataFrame]] = {}
 
     # Build (osm_id, LAU) → index lookup once — used for exposure accumulation
     key_to_idx = {
-        (row.get("osm_id"), row.get("LAU")): idx
-        for idx, row in features.iterrows()
+        (row.get("osm_id"), row.get("LAU")): idx for idx, row in features.iterrows()
     }
     exposure_accumulator: dict = {}  # (osm_id, LAU) → running sum across tiles
 
@@ -315,7 +325,9 @@ def _run_coastal_scenario(
                     if val > 0:
                         row = features.loc[idx]
                         key = (row.get("osm_id"), row.get("LAU"))
-                        exposure_accumulator[key] = exposure_accumulator.get(key, 0.0) + val
+                        exposure_accumulator[key] = (
+                            exposure_accumulator.get(key, 0.0) + val
+                        )
             except Exception as e:
                 print(f"  [coastal] Warning: exposure metric failed: {e}")
 
@@ -332,20 +344,25 @@ def _run_coastal_scenario(
         if dmg is not None and len(dmg) > 0:
             rp_damage.setdefault(rp, []).append(dmg)
 
-    print(f"  [coastal] Processed {tile_count} tiles, "
-          f"damage found for RPs: {sorted(rp_damage.keys())}")
-
+    print(
+        f"  [coastal] Processed {tile_count} tiles, "
+        f"damage found for RPs: {sorted(rp_damage.keys())}"
+    )
 
     # Convert (osm_id, LAU) accumulator → Series indexed like features
     exposure_series: Optional[pd.Series] = None
     if exposure_accumulator:
         exposure_series = pd.Series(
-            {key_to_idx[k]: v for k, v in exposure_accumulator.items() if k in key_to_idx}
+            {
+                key_to_idx[k]: v
+                for k, v in exposure_accumulator.items()
+                if k in key_to_idx
+            }
         ).reindex(features.index, fill_value=0.0)
 
     if not rp_damage:
         features = features.copy()
-        features[col_label]          = 0.0
+        features[col_label] = 0.0
         features[f"{col_label}_min"] = 0.0
         features[f"{col_label}_max"] = 0.0
         return features, exposure_series
@@ -355,15 +372,14 @@ def _run_coastal_scenario(
     # and the same osm_id can exist in multiple LAUs (physically distinct segments)
     rp_results: dict[int, gpd.GeoDataFrame] = {}
 
-
     for rp, frames in rp_damage.items():
         combined = pd.concat(frames, ignore_index=True)
 
         # Sum across tiles for same (osm_id, LAU) segment
         agg = (
-            combined
-            .groupby(_AGG_KEY, dropna=False)
-            [["damage_mean", "damage_min", "damage_max"]]
+            combined.groupby(_AGG_KEY, dropna=False)[
+                ["damage_mean", "damage_min", "damage_max"]
+            ]
             .sum()
             .reset_index()
         )
@@ -379,8 +395,8 @@ def _run_coastal_scenario(
         # Build a GeoDataFrame aligned to features index
         rp_gdf = gpd.GeoDataFrame(index=features.index)
         rp_gdf["damage_mean"] = agg["damage_mean"].reindex(features.index).fillna(0)
-        rp_gdf["damage_min"]  = agg["damage_min"].reindex(features.index).fillna(0)
-        rp_gdf["damage_max"]  = agg["damage_max"].reindex(features.index).fillna(0)
+        rp_gdf["damage_min"] = agg["damage_min"].reindex(features.index).fillna(0)
+        rp_gdf["damage_max"] = agg["damage_max"].reindex(features.index).fillna(0)
         rp_results[rp] = rp_gdf
 
     # --- Integrate to EAD ---
@@ -391,7 +407,7 @@ def _run_coastal_scenario(
     )
 
     features = features.copy()
-    features[col_label]          = ead_df["EAD"].values
+    features[col_label] = ead_df["EAD"].values
     features[f"{col_label}_min"] = ead_df["EAD_min"].values
     features[f"{col_label}_max"] = ead_df["EAD_max"].values
 
@@ -402,6 +418,7 @@ def _run_coastal_scenario(
 # ---------------------------------------------------------------------------
 # Main assessment function
 # ---------------------------------------------------------------------------
+
 
 def assess_coastal(
     features: gpd.GeoDataFrame,
@@ -432,8 +449,10 @@ def assess_coastal(
     t0 = time.time()
     active_scenarios = scenarios or COASTAL_SCENARIOS
 
-    print(f"\n[coastal] Starting assessment for {asset_type} "
-          f"({len(features)} features, {len(active_scenarios)} scenarios)")
+    print(
+        f"\n[coastal] Starting assessment for {asset_type} "
+        f"({len(features)} features, {len(active_scenarios)} scenarios)"
+    )
 
     features = features.to_crs(3035)
 
@@ -449,11 +468,11 @@ def assess_coastal(
     )
 
     bounds_3035 = tuple(features.total_bounds)  # (minx, miny, maxx, maxy)
-    exclusions  = object_curve_exclusions or {}
+    exclusions = object_curve_exclusions or {}
 
     # --- Run each scenario ---
     for (time_horizon, climate_scenario), col_label in active_scenarios.items():
-        is_baseline = (time_horizon == "2010" and climate_scenario == "None")
+        is_baseline = time_horizon == "2010" and climate_scenario == "None"
 
         features, exposure = _run_coastal_scenario(
             features=features,
@@ -472,7 +491,9 @@ def assess_coastal(
         # Attach exposure metric from baseline scenario
         if is_baseline and exposure is not None:
             if "exposure_coastal_100" not in features.columns:
-                features["exposure_coastal_100"] = exposure.reindex(features.index).values
+                features["exposure_coastal_100"] = exposure.reindex(
+                    features.index
+                ).values
 
         gc.collect()
 
@@ -481,5 +502,5 @@ def assess_coastal(
         features["exposure_coastal_100"] = np.nan
 
     elapsed = time.time() - t0
-    print(f"\n[coastal] All scenarios completed in {elapsed/60:.1f} min")
+    print(f"\n[coastal] All scenarios completed in {elapsed / 60:.1f} min")
     return features

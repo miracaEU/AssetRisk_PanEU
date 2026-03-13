@@ -16,16 +16,16 @@ from typing import Optional, Union
 
 # Folder/file name → internal asset type name used in vulnerability dicts
 ASSET_NAME_MAP = {
-    "Roadway":   "roads",
-    "Railway":   "rail",
-    "Airports":  "air",
-    "Power":     "power",
-    "Telecom":   "telecom",
+    "Roadway": "roads",
+    "Railway": "rail",
+    "Airports": "air",
+    "Power": "power",
+    "Telecom": "telecom",
     "Education": "education",
-    "Healthcare":"healthcare",
-    "Gas":       "gas",
-    "Oil":       "oil",
-    "Ports":     "ports",
+    "Healthcare": "healthcare",
+    "Gas": "gas",
+    "Oil": "oil",
+    "Ports": "ports",
 }
 
 # Reverse map: internal name → folder name
@@ -33,14 +33,44 @@ INTERNAL_TO_FOLDER = {v: k for k, v in ASSET_NAME_MAP.items()}
 
 # ISO3 → ISO2
 ISO3_TO_ISO2 = {
-    "ALB": "AL", "AUT": "AT", "BEL": "BE", "BGR": "BG", "BIH": "BA",
-    "CHE": "CH", "CYP": "CY", "CZE": "CZ", "DEU": "DE", "DNK": "DK",
-    "ESP": "ES", "EST": "EE", "FIN": "FI", "FRA": "FR", "GBR": "GB",
-    "GRC": "EL", "HRV": "HR", "HUN": "HU", "IRL": "IE", "ISL": "IS",
-    "ITA": "IT", "LIE": "LI", "LTU": "LT", "LUX": "LU", "LVA": "LV",
-    "MKD": "MK", "MLT": "MT", "MNE": "ME", "NLD": "NL", "NOR": "NO",
-    "POL": "PL", "PRT": "PT", "ROU": "RO", "SRB": "RS", "SVK": "SK",
-    "SVN": "SI", "SWE": "SE", "XKO": "XK",
+    "ALB": "AL",
+    "AUT": "AT",
+    "BEL": "BE",
+    "BGR": "BG",
+    "BIH": "BA",
+    "CHE": "CH",
+    "CYP": "CY",
+    "CZE": "CZ",
+    "DEU": "DE",
+    "DNK": "DK",
+    "ESP": "ES",
+    "EST": "EE",
+    "FIN": "FI",
+    "FRA": "FR",
+    "GBR": "GB",
+    "GRC": "EL",
+    "HRV": "HR",
+    "HUN": "HU",
+    "IRL": "IE",
+    "ISL": "IS",
+    "ITA": "IT",
+    "LIE": "LI",
+    "LTU": "LT",
+    "LUX": "LU",
+    "LVA": "LV",
+    "MKD": "MK",
+    "MLT": "MT",
+    "MNE": "ME",
+    "NLD": "NL",
+    "NOR": "NO",
+    "POL": "PL",
+    "PRT": "PT",
+    "ROU": "RO",
+    "SRB": "RS",
+    "SVK": "SK",
+    "SVN": "SI",
+    "SWE": "SE",
+    "XKO": "XK",
 }
 
 # ISO2 → ISO3 (derived automatically)
@@ -51,17 +81,21 @@ ISO2_TO_ISO3 = {v: k for k, v in ISO3_TO_ISO2.items()}
 # Helper functions
 # ---------------------------------------------------------------------------
 
+
 def to_iso2(country: str) -> str:
     """Convert ISO3 to ISO2. Returns input unchanged if already ISO2."""
     return ISO3_TO_ISO2.get(country.upper(), country.upper())
+
 
 def to_iso3(country: str) -> str:
     """Convert ISO2 to ISO3. Returns input unchanged if already ISO3."""
     return ISO2_TO_ISO3.get(country.upper(), country.upper())
 
+
 def to_internal_asset(asset: str) -> str:
     """Convert folder-style asset name to internal name (e.g. 'Roadway' → 'roads')."""
     return ASSET_NAME_MAP.get(asset, asset.lower())
+
 
 def to_folder_asset(asset: str) -> str:
     """Convert internal asset name to folder name (e.g. 'roads' → 'Roadway')."""
@@ -72,7 +106,10 @@ def to_folder_asset(asset: str) -> str:
 # Discovery functions
 # ---------------------------------------------------------------------------
 
-def list_available_countries(exposure_dir: Union[str, Path], asset_type: Optional[str] = None) -> list[str]:
+
+def list_available_countries(
+    exposure_dir: Union[str, Path], asset_type: Optional[str] = None
+) -> list[str]:
     """
     List all ISO2 country codes available in the exposure database.
 
@@ -107,7 +144,9 @@ def list_available_countries(exposure_dir: Union[str, Path], asset_type: Optiona
     return sorted(countries)
 
 
-def list_available_asset_types(exposure_dir: Union[str, Path], country: Optional[str] = None) -> list[str]:
+def list_available_asset_types(
+    exposure_dir: Union[str, Path], country: Optional[str] = None
+) -> list[str]:
     """
     List all internal asset type names available in the exposure database.
 
@@ -136,7 +175,9 @@ def list_available_asset_types(exposure_dir: Union[str, Path], country: Optional
     return asset_types
 
 
-def get_file_path(exposure_dir: Union[str, Path], asset_type: str, country: str) -> Optional[Path]:
+def get_file_path(
+    exposure_dir: Union[str, Path], asset_type: str, country: str
+) -> Optional[Path]:
     """
     Get the path to a specific exposure file.
 
@@ -158,6 +199,7 @@ def get_file_path(exposure_dir: Union[str, Path], asset_type: str, country: str)
 # ---------------------------------------------------------------------------
 # Loading functions
 # ---------------------------------------------------------------------------
+
 
 def load_exposure(
     exposure_dir: Union[str, Path],

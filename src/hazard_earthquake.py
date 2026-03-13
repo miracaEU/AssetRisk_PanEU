@@ -28,53 +28,11 @@ from tqdm import tqdm
 from typing import Optional, Union
 
 from damagescanner.core import VectorExposure
-from damagescanner.vector import _get_cell_area_m2
 
 from risk_integration import (
     collect_ead_per_asset,
     compute_exposure_metric,
 )
-
-warnings.simplefilter(action="ignore", category=FutureWarning)
-warnings.simplefilter(action="ignore", category=RuntimeWarning)
-warnings.filterwarnings("ignore", category=pd.errors.PerformanceWarning)
-
-def _worker_init():
-    import sys
-    sys.excepthook = lambda *args: None
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-EQ_RETURN_PERIODS   = [50, 101, 476, 976, 2500, 5000]  # from actual hazard files
-EQ_FILENAME_TEMPLATE = "PGA_1_{rp}_vs30.tif"
-EQ_HAZARD_COL       = "band_data"
-EQ_EXPOSURE_RP      = 476   # closest available RP to standard 475yr
-EQ_PGA_THRESHOLD    = 0.1                # g — minimum PGA to count as exposed
-
-# PGA intensity measure range (g) — matches your fragility curve definition
-EQ_PGA_RANGE = np.arange(0.0, 3.35, 0.05)
-
-# Damage state → mean loss ratio mapping
-DAMAGE_RATIOS = {
-    "minor":     0.05,
-    "moderate":  0.20,
-    "extensive": 0.70,
-    "severe":    0.85,
-    "complete":  1.00,
-    "collapse":  1.00,
-}
-
-# Damage state name standardisation
-DAMAGE_STATE_MAP = {
-    "Slight": "minor", "Minor": "minor", "DS1": "minor",
-    "Moderate": "moderate", "DS2": "moderate",
-    "Extensive": "extensive", "DS3": "extensive",
-    "Severe": "severe", "DS4": "severe",
-    "Complete": "complete", "DS5": "complete",
-    "Collapse": "collapse",
-}
 
 from constants import (
     DICT_CIS_VULNERABILITY_EARTHQUAKE,
@@ -82,9 +40,60 @@ from constants import (
 )
 
 
+warnings.simplefilter(action="ignore", category=FutureWarning)
+warnings.simplefilter(action="ignore", category=RuntimeWarning)
+warnings.filterwarnings("ignore", category=pd.errors.PerformanceWarning)
+
+
+def _worker_init():
+    import sys
+
+    sys.excepthook = lambda *args: None
+
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+EQ_RETURN_PERIODS = [50, 101, 476, 976, 2500, 5000]  # from actual hazard files
+EQ_FILENAME_TEMPLATE = "PGA_1_{rp}_vs30.tif"
+EQ_HAZARD_COL = "band_data"
+EQ_EXPOSURE_RP = 476  # closest available RP to standard 475yr
+EQ_PGA_THRESHOLD = 0.1  # g — minimum PGA to count as exposed
+
+# PGA intensity measure range (g) — matches your fragility curve definition
+EQ_PGA_RANGE = np.arange(0.0, 3.35, 0.05)
+
+# Damage state → mean loss ratio mapping
+DAMAGE_RATIOS = {
+    "minor": 0.05,
+    "moderate": 0.20,
+    "extensive": 0.70,
+    "severe": 0.85,
+    "complete": 1.00,
+    "collapse": 1.00,
+}
+
+# Damage state name standardisation
+DAMAGE_STATE_MAP = {
+    "Slight": "minor",
+    "Minor": "minor",
+    "DS1": "minor",
+    "Moderate": "moderate",
+    "DS2": "moderate",
+    "Extensive": "extensive",
+    "DS3": "extensive",
+    "Severe": "severe",
+    "DS4": "severe",
+    "Complete": "complete",
+    "DS5": "complete",
+    "Collapse": "collapse",
+}
+
 # ---------------------------------------------------------------------------
 # Fragility curve preparation
 # ---------------------------------------------------------------------------
+
 
 def _standardise_damage_states(fragility_curves: pd.DataFrame) -> pd.DataFrame:
     """Rename damage state columns to standardised names."""
@@ -94,6 +103,7 @@ def _standardise_damage_states(fragility_curves: pd.DataFrame) -> pd.DataFrame:
     ]
     fragility_curves.columns = pd.MultiIndex.from_tuples(new_cols)
     return fragility_curves
+
 
 def _is_curve_parametric(fragility_df: pd.DataFrame, curve_id: str) -> bool:
     """Return True if a curve uses parametric (median/beta) format."""
@@ -144,10 +154,11 @@ def prepare_earthquake_fragility(
         )
 
     # Split curves into parametric vs pre-computed
-    parametric_curves = {c for c in unique_curves if _is_curve_parametric(fragility_df, c)}
+    parametric_curves = {
+        c for c in unique_curves if _is_curve_parametric(fragility_df, c)
+    }
     precomputed_curves = unique_curves - parametric_curves
 
-    
     # Load each group and concatenate
     frames = []
     if parametric_curves:
@@ -176,7 +187,13 @@ def prepare_earthquake_fragility(
         df.columns = ["object_type", "damage"]
         return df
 
-    return fragility_curves, multi_curves, _make_maxdam(1), _make_maxdam(0), _make_maxdam(2)
+    return (
+        fragility_curves,
+        multi_curves,
+        _make_maxdam(1),
+        _make_maxdam(0),
+        _make_maxdam(2),
+    )
 
 
 def _build_curves_from_parameters(
@@ -195,7 +212,9 @@ def _build_curves_from_parameters(
         str_vals = [str(v).lower() for v in column_data if not pd.isna(v)]
 
         # Skip columns that don't contain median/beta parameters
-        if not (any("median" in v for v in str_vals) and any("beta" in v for v in str_vals)):
+        if not (
+            any("median" in v for v in str_vals) and any("beta" in v for v in str_vals)
+        ):
             continue
 
         # Extract median and beta values
@@ -214,16 +233,16 @@ def _build_curves_from_parameters(
             continue
         try:
             median_val = float(str(median_val).replace(",", "."))
-            beta_val   = float(str(beta_val).replace(",", "."))
+            beta_val = float(str(beta_val).replace(",", "."))
         except (ValueError, TypeError):
             continue
 
         if median_val <= 0 or beta_val <= 0:
             continue
 
-        ln_pga    = np.log(np.maximum(EQ_PGA_RANGE, 1e-6))
+        ln_pga = np.log(np.maximum(EQ_PGA_RANGE, 1e-6))
         ln_median = np.log(median_val)
-        probs     = norm.cdf((ln_pga - ln_median) / beta_val)
+        probs = norm.cdf((ln_pga - ln_median) / beta_val)
         result[(curve_id, damage_state)] = np.clip(probs, 0, 1)
 
     result.columns = pd.MultiIndex.from_tuples(result.columns)
@@ -240,9 +259,9 @@ def _load_precomputed_curves(
     pga_values = pga_values[valid]
 
     data_cols = fragility_df.iloc[:, 1:]
-    data_vals = pd.DataFrame(
-        data_cols.values[valid], columns=data_cols.columns
-    ).apply(pd.to_numeric, errors="coerce")
+    data_vals = pd.DataFrame(data_cols.values[valid], columns=data_cols.columns).apply(
+        pd.to_numeric, errors="coerce"
+    )
 
     keep_cols = [col for col in data_vals.columns if col[0] in unique_curves]
     data_vals = data_vals[keep_cols]
@@ -254,6 +273,7 @@ def _load_precomputed_curves(
 # ---------------------------------------------------------------------------
 # Hazard data loading
 # ---------------------------------------------------------------------------
+
 
 def load_earthquake_hazard(
     hazard_dir: Union[str, Path],
@@ -297,6 +317,7 @@ def load_earthquake_hazard(
 # Per-asset fragility-based damage calculation — vectorised
 # ---------------------------------------------------------------------------
 
+
 def _build_edr_lookup(fragility_curves: pd.DataFrame, curve_id: str) -> np.ndarray:
     """
     Pre-compute an Expected Damage Ratio (EDR) lookup table for one curve.
@@ -315,7 +336,7 @@ def _build_edr_lookup(fragility_curves: pd.DataFrame, curve_id: str) -> np.ndarr
         return np.zeros(len(fragility_curves))
 
     pga_index = fragility_curves.index.to_numpy(dtype=float)
-    n_pga     = len(pga_index)
+    n_pga = len(pga_index)
 
     # Exceedance matrix: shape (n_pga, n_states)
     exceed = np.zeros((n_pga, len(states)))
@@ -326,16 +347,16 @@ def _build_edr_lookup(fragility_curves: pd.DataFrame, curve_id: str) -> np.ndarr
 
     # Individual state probabilities: P(state) = P(exceed state) - P(exceed next state)
     # Shape: (n_pga, n_states + 1)  — first col = P(no damage)
-    n_states   = len(states)
+    n_states = len(states)
     individual = np.zeros((n_pga, n_states + 1))
-    individual[:, 0] = np.maximum(0.0, 1.0 - exceed[:, 0])           # no damage
+    individual[:, 0] = np.maximum(0.0, 1.0 - exceed[:, 0])  # no damage
     for j in range(n_states - 1):
         individual[:, j + 1] = np.maximum(0.0, exceed[:, j] - exceed[:, j + 1])
-    individual[:, n_states] = exceed[:, -1]                            # complete/collapse
+    individual[:, n_states] = exceed[:, -1]  # complete/collapse
 
     # Normalise rows
     row_sums = individual.sum(axis=1, keepdims=True)
-    row_sums  = np.where(row_sums > 0, row_sums, 1.0)
+    row_sums = np.where(row_sums > 0, row_sums, 1.0)
     individual /= row_sums
 
     # Damage ratio weights: [0 for no_damage, then DAMAGE_RATIOS per state]
@@ -359,7 +380,15 @@ def _compute_eq_rp_damage(args, common) -> tuple:
     Returns (rp, DataFrame with damage_mean/min/max columns)
     """
     rp, hazard = args
-    features, fragility_curves, multi_curves, maxdam_mean, maxdam_min, maxdam_max, asset_type = common
+    (
+        features,
+        fragility_curves,
+        multi_curves,
+        maxdam_mean,
+        maxdam_min,
+        maxdam_max,
+        asset_type,
+    ) = common
 
     # --- Extract PGA values ---
     exposed, _, crs, cell_area = VectorExposure(
@@ -374,78 +403,78 @@ def _compute_eq_rp_damage(args, common) -> tuple:
 
     if cell_area is None:
         try:
-            cell_area = float(abs(hazard.x[1].values - hazard.x[0].values) *
-                              abs(hazard.y[0].values - hazard.y[1].values))
+            cell_area = float(
+                abs(hazard.x[1].values - hazard.x[0].values)
+                * abs(hazard.y[0].values - hazard.y[1].values)
+            )
         except Exception:
             cell_area = 1.0
 
     # --- Maxdam lookups ---
     maxdam_lookup_mean = dict(zip(maxdam_mean["object_type"], maxdam_mean["damage"]))
-    maxdam_lookup_min  = dict(zip(maxdam_min["object_type"],  maxdam_min["damage"]))
-    maxdam_lookup_max  = dict(zip(maxdam_max["object_type"],  maxdam_max["damage"]))
+    maxdam_lookup_min = dict(zip(maxdam_min["object_type"], maxdam_min["damage"]))
+    maxdam_lookup_max = dict(zip(maxdam_max["object_type"], maxdam_max["damage"]))
 
-    ci_system  = DICT_CIS_VULNERABILITY_EARTHQUAKE.get(asset_type, {})
-    pga_index  = fragility_curves.index.to_numpy(dtype=float)
+    ci_system = DICT_CIS_VULNERABILITY_EARTHQUAKE.get(asset_type, {})
+    pga_index = fragility_curves.index.to_numpy(dtype=float)
 
     # --- Pre-compute EDR lookup tables once per curve ---
     edr_tables: dict[str, np.ndarray] = {
-        cid: _build_edr_lookup(fragility_curves, cid)
-        for cid in multi_curves
+        cid: _build_edr_lookup(fragility_curves, cid) for cid in multi_curves
     }
-
-    # --- Compute coverage weights per asset (vectorised by geometry type) ---
-    geom_types  = exposed.geometry.geom_type
-    is_poly     = geom_types.isin(["Polygon", "MultiPolygon"])
-    is_line     = geom_types.isin(["LineString", "MultiLineString"])
 
     # --- Process each object_type group ---
     # Grouping avoids repeated curve_id lookups; within each group all assets
     # share the same curve list so we can batch the np.interp calls.
     damage_mean = np.zeros(len(exposed))
-    damage_min  = np.zeros(len(exposed))
-    damage_max  = np.zeros(len(exposed))
+    damage_min = np.zeros(len(exposed))
+    damage_max = np.zeros(len(exposed))
 
     for obj_type, group_idx in exposed.groupby("object_type").groups.items():
         curve_ids = ci_system.get(obj_type, [])
         if not curve_ids:
             continue
 
-        group    = exposed.loc[group_idx]
-        pos      = [exposed.index.get_loc(i) for i in group_idx]
+        group = exposed.loc[group_idx]
+        pos = [exposed.index.get_loc(i) for i in group_idx]
 
-        md_mean  = maxdam_lookup_mean.get(obj_type, 0.0)
-        md_min   = maxdam_lookup_min.get(obj_type, 0.0)
-        md_max   = maxdam_lookup_max.get(obj_type, 0.0)
-
+        md_mean = maxdam_lookup_mean.get(obj_type, 0.0)
+        md_min = maxdam_lookup_min.get(obj_type, 0.0)
+        md_max = maxdam_lookup_max.get(obj_type, 0.0)
 
         # --- Build padded matrices once per group (shared across all curves) ---
-        values_list   = [np.asarray(v if v is not None else [0], dtype=float)
-                         for v in group["values"].tolist()]
-        coverage_list = [np.asarray(c if c is not None else [0], dtype=float)
-                         for c in group["coverage"].tolist()]
+        values_list = [
+            np.asarray(v if v is not None else [0], dtype=float)
+            for v in group["values"].tolist()
+        ]
+        coverage_list = [
+            np.asarray(c if c is not None else [0], dtype=float)
+            for c in group["coverage"].tolist()
+        ]
 
         n_assets = len(group)
-        max_len  = max(len(v) for v in values_list) if values_list else 1
+        max_len = max(len(v) for v in values_list) if values_list else 1
 
         pga_mat = np.zeros((n_assets, max_len))
         cov_mat = np.zeros((n_assets, max_len))
-        mask    = np.zeros((n_assets, max_len), dtype=bool)
+        mask = np.zeros((n_assets, max_len), dtype=bool)
 
         for k, (pga_vals, cov_vals) in enumerate(zip(values_list, coverage_list)):
             n = len(pga_vals)
             pga_mat[k, :n] = pga_vals
             cov_mat[k, :n] = cov_vals
-            mask[k, :n]    = True
+            mask[k, :n] = True
 
         # Geometry-specific coverage scaling -- done once per group
         geom_types_group = group.geometry.geom_type.to_numpy()
-        is_poly_mask  = np.isin(geom_types_group, ["Polygon", "MultiPolygon"])
-        is_point_mask = ~np.isin(geom_types_group,
-                                 ["Polygon", "MultiPolygon",
-                                  "LineString", "MultiLineString"])
+        is_poly_mask = np.isin(geom_types_group, ["Polygon", "MultiPolygon"])
+        is_point_mask = ~np.isin(
+            geom_types_group,
+            ["Polygon", "MultiPolygon", "LineString", "MultiLineString"],
+        )
         cov_mat_scaled = cov_mat.copy()
-        cov_mat_scaled[is_poly_mask]  *= cell_area
-        cov_mat_scaled[is_point_mask]  = 1.0
+        cov_mat_scaled[is_poly_mask] *= cell_area
+        cov_mat_scaled[is_point_mask] = 1.0
 
         # Accumulate damage across all curves for this object type
         curve_damages = []
@@ -458,7 +487,7 @@ def _compute_eq_rp_damage(args, common) -> tuple:
 
             # Vectorised EDR interpolation over all assets x all cells at once
             edr_flat = np.interp(pga_mat.ravel(), pga_index, edr_table)
-            edr_mat  = edr_flat.reshape(pga_mat.shape)
+            edr_mat = edr_flat.reshape(pga_mat.shape)
 
             # Sum over cells per asset (masked to ignore padding)
             asset_damages = np.sum(edr_mat * cov_mat_scaled * mask, axis=1) * md_mean
@@ -475,12 +504,12 @@ def _compute_eq_rp_damage(args, common) -> tuple:
 
         for k, p in enumerate(pos):
             damage_mean[p] = float(np.mean(curve_mat[:, k]))
-            damage_min[p]  = float(np.min(curve_mat[:, k]))  * scale_min
-            damage_max[p]  = float(np.max(curve_mat[:, k]))  * scale_max
+            damage_min[p] = float(np.min(curve_mat[:, k])) * scale_min
+            damage_max[p] = float(np.max(curve_mat[:, k])) * scale_max
 
     exposed["damage_mean"] = damage_mean
-    exposed["damage_min"]  = damage_min
-    exposed["damage_max"]  = damage_max
+    exposed["damage_min"] = damage_min
+    exposed["damage_max"] = damage_max
 
     return rp, exposed
 
@@ -489,12 +518,14 @@ def _compute_eq_rp_damage(args, common) -> tuple:
 # Main assessment function
 # ---------------------------------------------------------------------------
 
+
 def assess_earthquake(
     features: gpd.GeoDataFrame,
     hazard_dir: Union[str, Path],
     fragility_path: Union[str, Path],
     asset_type: str,
-    return_periods: list[int] = EQ_RETURN_PERIODS,    pga_threshold: float = EQ_PGA_THRESHOLD,
+    return_periods: list[int] = EQ_RETURN_PERIODS,
+    pga_threshold: float = EQ_PGA_THRESHOLD,
     n_workers: Optional[int] = None,
 ) -> gpd.GeoDataFrame:
     """
@@ -515,59 +546,75 @@ def assess_earthquake(
           exposure_eq_475
     """
     t0 = time.time()
-    print(f"[earthquake] Starting assessment for {asset_type} "
-          f"({len(features)} features, {len(return_periods)} return periods)")
+    print(
+        f"[earthquake] Starting assessment for {asset_type} "
+        f"({len(features)} features, {len(return_periods)} return periods)"
+    )
 
     # --- 1. Fragility curves ---
     try:
-        fragility_curves, multi_curves, maxdam_mean, maxdam_min, maxdam_max = \
+        fragility_curves, multi_curves, maxdam_mean, maxdam_min, maxdam_max = (
             prepare_earthquake_fragility(asset_type, fragility_path)
+        )
     except ValueError as e:
         print(f"[earthquake] {e} — skipping earthquake for this asset type.")
-        features["EAD_earthquake"]     = np.nan
+        features["EAD_earthquake"] = np.nan
         features["EAD_earthquake_min"] = np.nan
         features["EAD_earthquake_max"] = np.nan
-        features["exposure_eq_475"]    = np.nan
+        features["exposure_eq_475"] = np.nan
         return features
 
     # --- 2. Hazard data ---
     from hazard_river import get_country_bounds_4326
+
     country_bounds = get_country_bounds_4326(features)
     hazard_dict = load_earthquake_hazard(hazard_dir, return_periods, country_bounds)
 
     if not hazard_dict:
         print("[earthquake] No hazard data found. Returning features unchanged.")
-        features["EAD_earthquake"]     = np.nan
+        features["EAD_earthquake"] = np.nan
         features["EAD_earthquake_min"] = np.nan
         features["EAD_earthquake_max"] = np.nan
-        features["exposure_eq_475"]    = np.nan
+        features["exposure_eq_475"] = np.nan
         return features
 
     available_rps = sorted(hazard_dict.keys())
 
     # --- 3. Parallel damage calculation per return period ---
-    common = (features, fragility_curves, multi_curves,
-              maxdam_mean, maxdam_min, maxdam_max, asset_type)
+    common = (
+        features,
+        fragility_curves,
+        multi_curves,
+        maxdam_mean,
+        maxdam_min,
+        maxdam_max,
+        asset_type,
+    )
     work_items = [(rp, hazard_dict[rp]) for rp in available_rps]
     worker_fn = functools.partial(_compute_eq_rp_damage, common=common)
 
-    print(f"[earthquake] Running damage calculation across {len(work_items)} return periods...")
-    with concurrent.futures.ProcessPoolExecutor(max_workers=n_workers,
-                                                initializer=_worker_init) as executor:
-        raw_results = list(tqdm(
-            executor.map(worker_fn, work_items),
-            total=len(work_items),
-            desc="Earthquake RPs",
-        ))
+    print(
+        f"[earthquake] Running damage calculation across {len(work_items)} return periods..."
+    )
+    with concurrent.futures.ProcessPoolExecutor(
+        max_workers=n_workers, initializer=_worker_init
+    ) as executor:
+        raw_results = list(
+            tqdm(
+                executor.map(worker_fn, work_items),
+                total=len(work_items),
+                desc="Earthquake RPs",
+            )
+        )
 
     rp_results = {rp: df for rp, df in raw_results if not df.empty}
 
     if not rp_results:
         print("[earthquake] No damage computed.")
-        features["EAD_earthquake"]     = 0.0
+        features["EAD_earthquake"] = 0.0
         features["EAD_earthquake_min"] = 0.0
         features["EAD_earthquake_max"] = 0.0
-        features["exposure_eq_475"]    = 0.0
+        features["exposure_eq_475"] = 0.0
         return features
 
     # --- 4. Integrate EAD ---
@@ -579,14 +626,16 @@ def assess_earthquake(
     )
 
     features = features.copy()
-    features["EAD_earthquake"]     = ead_df["EAD"].values
+    features["EAD_earthquake"] = ead_df["EAD"].values
     features["EAD_earthquake_min"] = ead_df["EAD_min"].values
     features["EAD_earthquake_max"] = ead_df["EAD_max"].values
 
     # --- 5. Exposure metric at RP475 (count/length/area where PGA > threshold) ---
     if EQ_EXPOSURE_RP in hazard_dict:
-        print(f"[earthquake] Computing exposure metric at RP{EQ_EXPOSURE_RP} "
-              f"(PGA > {pga_threshold}g)...")
+        print(
+            f"[earthquake] Computing exposure metric at RP{EQ_EXPOSURE_RP} "
+            f"(PGA > {pga_threshold}g)..."
+        )
         features["exposure_eq_475"] = compute_exposure_metric(
             features=features,
             hazard=hazard_dict[EQ_EXPOSURE_RP],
@@ -595,12 +644,16 @@ def assess_earthquake(
             pga_threshold=pga_threshold,
         ).values
     else:
-        print(f"[earthquake] RP{EQ_EXPOSURE_RP} not available, skipping exposure metric.")
+        print(
+            f"[earthquake] RP{EQ_EXPOSURE_RP} not available, skipping exposure metric."
+        )
         features["exposure_eq_475"] = np.nan
 
     elapsed = time.time() - t0
-    print(f"[earthquake] Done in {elapsed:.1f}s. "
-          f"Mean EAD_earthquake: {features['EAD_earthquake'].mean():.2f}, "
-          f"Total: {features['EAD_earthquake'].sum():.2e}")
+    print(
+        f"[earthquake] Done in {elapsed:.1f}s. "
+        f"Mean EAD_earthquake: {features['EAD_earthquake'].mean():.2f}, "
+        f"Total: {features['EAD_earthquake'].sum():.2e}"
+    )
 
     return features

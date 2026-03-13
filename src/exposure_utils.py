@@ -23,6 +23,7 @@ warnings.simplefilter(action="ignore", category=RuntimeWarning)
 # Config loading
 # ---------------------------------------------------------------------------
 
+
 def load_config(config_path: Union[str, Path] = "config.yml") -> dict:
     """Load YAML config file."""
     config_path = Path(config_path)
@@ -40,14 +41,43 @@ def load_config(config_path: Union[str, Path] = "config.yml") -> dict:
 # ---------------------------------------------------------------------------
 
 ISO3_TO_ISO2 = {
-    "ALB": "AL", "AUT": "AT", "BEL": "BE", "BGR": "BG", "BIH": "BA",
-    "CHE": "CH", "CYP": "CY", "CZE": "CZ", "DEU": "DE", "DNK": "DK",
-    "EST": "EE", "ESP": "ES", "FIN": "FI", "FRA": "FR", "GRC": "EL",
-    "HRV": "HR", "HUN": "HU", "IRL": "IE", "ISL": "IS", "ITA": "IT",
-    "LIE": "LI", "LTU": "LT", "LUX": "LU", "LVA": "LV", "MKD": "MK",
-    "MLT": "MT", "MNE": "ME", "NLD": "NL", "NOR": "NO", "POL": "PL",
-    "PRT": "PT", "ROU": "RO", "SRB": "RS", "SVK": "SK", "SVN": "SI",
-    "SWE": "SE", "XKO": "XK",
+    "ALB": "AL",
+    "AUT": "AT",
+    "BEL": "BE",
+    "BGR": "BG",
+    "BIH": "BA",
+    "CHE": "CH",
+    "CYP": "CY",
+    "CZE": "CZ",
+    "DEU": "DE",
+    "DNK": "DK",
+    "EST": "EE",
+    "ESP": "ES",
+    "FIN": "FI",
+    "FRA": "FR",
+    "GRC": "EL",
+    "HRV": "HR",
+    "HUN": "HU",
+    "IRL": "IE",
+    "ISL": "IS",
+    "ITA": "IT",
+    "LIE": "LI",
+    "LTU": "LT",
+    "LUX": "LU",
+    "LVA": "LV",
+    "MKD": "MK",
+    "MLT": "MT",
+    "MNE": "ME",
+    "NLD": "NL",
+    "NOR": "NO",
+    "POL": "PL",
+    "PRT": "PT",
+    "ROU": "RO",
+    "SRB": "RS",
+    "SVK": "SK",
+    "SVN": "SI",
+    "SWE": "SE",
+    "XKO": "XK",
 }
 
 ISO2_TO_ISO3 = {v: k for k, v in ISO3_TO_ISO2.items()}
@@ -70,17 +100,17 @@ def to_iso3(code: str) -> str:
 # ---------------------------------------------------------------------------
 
 _ASSET_FOLDER_MAP = {
-    "roads":      "Roadway",
+    "roads": "Roadway",
     "main_roads": "Roadway",
-    "rail":       "Railway",
-    "air":        "Airports",
-    "telecom":    "Telecom",
-    "education":  "Education",
+    "rail": "Railway",
+    "air": "Airports",
+    "telecom": "Telecom",
+    "education": "Education",
     "healthcare": "Healthcare",
-    "power":      "Power",
-    "gas":        "Gas",
-    "oil":        "Oil",
-    "ports":      "Ports",
+    "power": "Power",
+    "gas": "Gas",
+    "oil": "Oil",
+    "ports": "Ports",
 }
 
 

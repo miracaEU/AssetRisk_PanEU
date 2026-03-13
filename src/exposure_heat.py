@@ -42,20 +42,26 @@ warnings.simplefilter(action="ignore", category=RuntimeWarning)
 # ---------------------------------------------------------------------------
 
 TIME_WINDOWS = {
-    "recent":         (1990, 2016),
-    "near_future":    (2021, 2040),
-    "mid_future":     (2041, 2060),
-    "far_future":     (2061, 2080),
+    "recent": (1990, 2016),
+    "near_future": (2021, 2040),
+    "mid_future": (2041, 2060),
+    "far_future": (2061, 2080),
     "distant_future": (2081, 2100),
 }
 
 WARM_MONTHS = [4, 5, 6, 7, 8, 9, 10]
 
 MONTH_NAMES = {
-    4: "April", 5: "May", 6: "June", 7: "July",
-    8: "August", 9: "September", 10: "October",
+    4: "April",
+    5: "May",
+    6: "June",
+    7: "July",
+    8: "August",
+    9: "September",
+    10: "October",
     0: "Yearly",
 }
+
 
 def _detect_heat_data_var(ds: xr.Dataset) -> str:
     """Detect heat data variable — projections use tasAdjust_NON_CDM, reanalysis uses t2m."""
@@ -69,9 +75,11 @@ def _detect_heat_data_var(ds: xr.Dataset) -> str:
         raise ValueError(f"No data variable found. Available: {list(ds.data_vars)}")
     return candidates[0]
 
+
 # ---------------------------------------------------------------------------
 # File discovery
 # ---------------------------------------------------------------------------
+
 
 def _parse_heat_filename(stem: str) -> dict | None:
     threshold_match = re.search(r"-(\d+)deg-", stem)
@@ -80,8 +88,12 @@ def _parse_heat_filename(stem: str) -> dict | None:
     threshold = f"{threshold_match.group(1)}C"
 
     if "reanalysis" in stem:
-        return {"threshold": threshold, "file_type": "reanalysis",
-                "scenario": "historical", "model": "reanalysis"}
+        return {
+            "threshold": threshold,
+            "file_type": "reanalysis",
+            "scenario": "historical",
+            "model": "reanalysis",
+        }
     elif "projections" in stem:
         scenario_match = re.search(r"-(rcp_[\d_]+)-", stem)
         if not scenario_match:
@@ -91,8 +103,12 @@ def _parse_heat_filename(stem: str) -> dict | None:
             rf"-{re.escape(scenario)}-(.+?)-(?:r\d+i\d+p\d+|grid)", stem
         )
         model = model_match.group(1) if model_match else "unknown"
-        return {"threshold": threshold, "file_type": "projections",
-                "scenario": scenario, "model": model}
+        return {
+            "threshold": threshold,
+            "file_type": "projections",
+            "scenario": scenario,
+            "model": model,
+        }
     return None
 
 
@@ -113,6 +129,7 @@ def discover_heat_files(
 # ---------------------------------------------------------------------------
 # Vectorised sampling helper
 # ---------------------------------------------------------------------------
+
 
 def _sample_features_vectorised(
     monthly_mean: xr.DataArray,
@@ -136,6 +153,7 @@ def _sample_features_vectorised(
 # Core: open file once, compute all windows
 # ---------------------------------------------------------------------------
 
+
 def _assess_all_windows(
     nc_path: Path,
     features_4326: gpd.GeoDataFrame,
@@ -153,7 +171,7 @@ def _assess_all_windows(
     data_var = _detect_heat_data_var(ds)
 
     # Spatial clip once for this file (reduces all subsequent ops)
-    bounds = features_4326.total_bounds   # minx, miny, maxx, maxy
+    bounds = features_4326.total_bounds  # minx, miny, maxx, maxy
     ds_clip = ds.sel(
         lat=slice(bounds[1] - 0.5, bounds[3] + 0.5),
         lon=slice(bounds[0] - 0.5, bounds[2] + 0.5),
@@ -162,7 +180,9 @@ def _assess_all_windows(
     # Pre-extract centroid coordinates as numpy arrays — done once per file
     # Compute centroids in EPSG:3035 (metres) then reproject to WGS84 for sampling
     geoms_3035 = features_4326.to_crs(3035).geometry
-    centroids_3035 = geoms_3035.where(geoms_3035.geom_type == "Point", geoms_3035.centroid)
+    centroids_3035 = geoms_3035.where(
+        geoms_3035.geom_type == "Point", geoms_3035.centroid
+    )
     centroids_4326 = centroids_3035.to_crs(4326)
     lats = centroids_4326.y.values
     lons = centroids_4326.x.values
@@ -175,9 +195,7 @@ def _assess_all_windows(
         if yr_start > years_in_file.max() or yr_end < years_in_file.min():
             continue
 
-        ds_window = ds_clip.sel(
-            time=slice(f"{yr_start}-01-01", f"{yr_end}-12-31")
-        )
+        ds_window = ds_clip.sel(time=slice(f"{yr_start}-01-01", f"{yr_end}-12-31"))
         if ds_window.sizes["time"] == 0:
             continue
 
@@ -197,11 +215,13 @@ def _assess_all_windows(
         # Build long-form DataFrame
         records = []
         for j, month in enumerate(months):
-            df_month = pd.DataFrame({
-                "osm_id": osm_ids,
-                "month": month,
-                f"avg_days_{window_name}": month_vals[:, j],
-            })
+            df_month = pd.DataFrame(
+                {
+                    "osm_id": osm_ids,
+                    "month": month,
+                    f"avg_days_{window_name}": month_vals[:, j],
+                }
+            )
             records.append(df_month)
 
         results[window_name] = pd.concat(records, ignore_index=True)
@@ -213,6 +233,7 @@ def _assess_all_windows(
 # ---------------------------------------------------------------------------
 # Aggregation across models
 # ---------------------------------------------------------------------------
+
 
 def _aggregate_models(
     window_dfs: list[pd.DataFrame],
@@ -250,6 +271,7 @@ def _aggregate_models(
 # Relative change calculation
 # ---------------------------------------------------------------------------
 
+
 def _calculate_relative_changes(
     recent_df: pd.DataFrame,
     future_df: pd.DataFrame,
@@ -260,7 +282,8 @@ def _calculate_relative_changes(
     Matches original calculate_relative_change_safe logic exactly.
     """
     merged = pd.merge(
-        recent_df, future_df,
+        recent_df,
+        future_df,
         on=["osm_id", "month", "month_name"],
         suffixes=("_baseline", "_future"),
     )
@@ -271,7 +294,7 @@ def _calculate_relative_changes(
 
     for stat in stats_to_process:
         base_col = "avg_days_recent_mean"
-        fut_col  = f"avg_days_{future_window}_{stat}"
+        fut_col = f"avg_days_{future_window}_{stat}"
         if base_col not in merged.columns or fut_col not in merged.columns:
             continue
 
@@ -281,11 +304,13 @@ def _calculate_relative_changes(
         merged[abs_col] = merged[fut_col] - merged[base_col]
         merged[rel_col] = np.nan
 
-        normal   = merged[base_col] > 0
+        normal = merged[base_col] > 0
         zero_pos = (merged[base_col] == 0) & (merged[fut_col] > 0)
         zero_zer = (merged[base_col] == 0) & (merged[fut_col] == 0)
 
-        merged.loc[normal,   rel_col] = merged.loc[normal, abs_col] / merged.loc[normal, base_col]
+        merged.loc[normal, rel_col] = (
+            merged.loc[normal, abs_col] / merged.loc[normal, base_col]
+        )
         merged.loc[zero_pos, rel_col] = 10.0
         merged.loc[zero_zer, rel_col] = 0.0
 
@@ -295,6 +320,7 @@ def _calculate_relative_changes(
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
+
 
 def assess_heat(
     features: gpd.GeoDataFrame,
@@ -348,7 +374,9 @@ def assess_heat(
 
         for scenario, model_paths in scenario_files.items():
             scenario_clean = scenario.lower().replace("-", "_")
-            print(f"[heat]  {threshold_clean} | {scenario_clean} ({len(model_paths)} model(s))")
+            print(
+                f"[heat]  {threshold_clean} | {scenario_clean} ({len(model_paths)} model(s))"
+            )
 
             if scenario == "historical":
                 applicable = {"recent": time_windows["recent"]}
@@ -380,25 +408,37 @@ def assess_heat(
                     if not col.startswith("avg_days"):
                         continue
                     stat = col.split("_")[-1]
-                    out_col = f"heat_{threshold_clean}_{scenario_clean}_{window_name}_{stat}"
+                    out_col = (
+                        f"heat_{threshold_clean}_{scenario_clean}_{window_name}_{stat}"
+                    )
                     all_columns[out_col] = yearly[col].rename(out_col)
 
-            if scenario == "historical" and "recent" in scenario_aggregated.get("historical", {}):
+            if scenario == "historical" and "recent" in scenario_aggregated.get(
+                "historical", {}
+            ):
                 hist_recent = scenario_aggregated["historical"]["recent"]
 
         # --- Pass 2: relative changes ---
         if hist_recent is None:
-            print(f"[heat] No historical/recent data for {threshold_clean} — skipping relative changes")
+            print(
+                f"[heat] No historical/recent data for {threshold_clean} — skipping relative changes"
+            )
             continue
 
         for scenario_clean, windows in scenario_aggregated.items():
             if scenario_clean == "historical":
                 continue
             for future_window, future_agg in windows.items():
-                changes = _calculate_relative_changes(hist_recent, future_agg, future_window)
-                yearly_ch = changes[changes["month_name"] == "Yearly"].set_index("osm_id")
+                changes = _calculate_relative_changes(
+                    hist_recent, future_agg, future_window
+                )
+                yearly_ch = changes[changes["month_name"] == "Yearly"].set_index(
+                    "osm_id"
+                )
                 for col in yearly_ch.columns:
-                    if not (col.startswith("abs_change") or col.startswith("rel_change")):
+                    if not (
+                        col.startswith("abs_change") or col.startswith("rel_change")
+                    ):
                         continue
                     out_col = f"heat_{threshold_clean}_{scenario_clean}_{col}"
                     all_columns[out_col] = yearly_ch[col].rename(out_col)

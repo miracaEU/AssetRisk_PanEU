@@ -42,16 +42,20 @@ warnings.simplefilter(action="ignore", category=RuntimeWarning)
 # ---------------------------------------------------------------------------
 
 TIME_WINDOWS = {
-    "recent":      (1990, 2016),
+    "recent": (1990, 2016),
     "near_future": (2021, 2040),
-    "mid_future":  (2041, 2060),
-    "far_future":  (2061, 2080),
+    "mid_future": (2041, 2060),
+    "far_future": (2061, 2080),
 }
 
 FIRE_MONTHS = [5, 6, 7, 8, 9]
 
 MONTH_NAMES = {
-    5: "May", 6: "June", 7: "July", 8: "August", 9: "September",
+    5: "May",
+    6: "June",
+    7: "July",
+    8: "August",
+    9: "September",
     0: "Yearly",
 }
 
@@ -59,9 +63,14 @@ MONTH_NAMES = {
 # File discovery
 # ---------------------------------------------------------------------------
 
+
 def _parse_wildfire_filename(stem: str) -> dict | None:
     if "reanalysis" in stem:
-        return {"file_type": "reanalysis", "scenario": "historical", "model": "reanalysis"}
+        return {
+            "file_type": "reanalysis",
+            "scenario": "historical",
+            "model": "reanalysis",
+        }
     elif "projections" in stem:
         scenario_match = re.search(r"-(rcp_[\d_]+)-", stem)
         if not scenario_match:
@@ -91,6 +100,7 @@ def discover_wildfire_files(
 # Vectorised sampling helper
 # ---------------------------------------------------------------------------
 
+
 def _sample_features_vectorised(
     monthly_mean: xr.DataArray,
     lats: np.ndarray,
@@ -112,6 +122,7 @@ def _sample_features_vectorised(
 # ---------------------------------------------------------------------------
 # Core: open file once, compute all windows
 # ---------------------------------------------------------------------------
+
 
 def _detect_data_var(ds: xr.Dataset) -> str:
     """Detect wildfire data variable (fwi, data, or first available)."""
@@ -150,7 +161,9 @@ def _assess_all_windows(
     # Pre-extract centroid coordinates as numpy arrays — done once per file
     # Compute centroids in EPSG:3035 (metres) then reproject to WGS84 for sampling
     geoms_3035 = features_4326.to_crs(3035).geometry
-    centroids_3035 = geoms_3035.where(geoms_3035.geom_type == "Point", geoms_3035.centroid)
+    centroids_3035 = geoms_3035.where(
+        geoms_3035.geom_type == "Point", geoms_3035.centroid
+    )
     centroids_4326 = centroids_3035.to_crs(4326)
     lats = centroids_4326.y.values
     lons = centroids_4326.x.values
@@ -163,9 +176,7 @@ def _assess_all_windows(
         if yr_start > years_in_file.max() or yr_end < years_in_file.min():
             continue
 
-        ds_window = ds_clip.sel(
-            time=slice(f"{yr_start}-01-01", f"{yr_end}-12-31")
-        )
+        ds_window = ds_clip.sel(time=slice(f"{yr_start}-01-01", f"{yr_end}-12-31"))
         if ds_window.sizes["time"] == 0:
             continue
 
@@ -184,11 +195,15 @@ def _assess_all_windows(
 
         records = []
         for j, month in enumerate(months):
-            records.append(pd.DataFrame({
-                "osm_id": osm_ids,
-                "month": month,
-                f"avg_days_{window_name}": month_vals[:, j],
-            }))
+            records.append(
+                pd.DataFrame(
+                    {
+                        "osm_id": osm_ids,
+                        "month": month,
+                        f"avg_days_{window_name}": month_vals[:, j],
+                    }
+                )
+            )
 
         results[window_name] = pd.concat(records, ignore_index=True)
 
@@ -199,6 +214,7 @@ def _assess_all_windows(
 # ---------------------------------------------------------------------------
 # Aggregation across models
 # ---------------------------------------------------------------------------
+
 
 def _aggregate_models(
     window_dfs: list[pd.DataFrame],
@@ -236,6 +252,7 @@ def _aggregate_models(
 # Relative change calculation
 # ---------------------------------------------------------------------------
 
+
 def _calculate_relative_changes(
     recent_df: pd.DataFrame,
     future_df: pd.DataFrame,
@@ -246,7 +263,8 @@ def _calculate_relative_changes(
     Matches original calculate_relative_change_safe logic exactly.
     """
     merged = pd.merge(
-        recent_df, future_df,
+        recent_df,
+        future_df,
         on=["osm_id", "month", "month_name"],
         suffixes=("_baseline", "_future"),
     )
@@ -257,7 +275,7 @@ def _calculate_relative_changes(
 
     for stat in stats_to_process:
         base_col = "avg_days_recent_mean"
-        fut_col  = f"avg_days_{future_window}_{stat}"
+        fut_col = f"avg_days_{future_window}_{stat}"
         if base_col not in merged.columns or fut_col not in merged.columns:
             continue
 
@@ -267,11 +285,13 @@ def _calculate_relative_changes(
         merged[abs_col] = merged[fut_col] - merged[base_col]
         merged[rel_col] = np.nan
 
-        normal   = merged[base_col] > 0
+        normal = merged[base_col] > 0
         zero_pos = (merged[base_col] == 0) & (merged[fut_col] > 0)
         zero_zer = (merged[base_col] == 0) & (merged[fut_col] == 0)
 
-        merged.loc[normal,   rel_col] = merged.loc[normal, abs_col] / merged.loc[normal, base_col]
+        merged.loc[normal, rel_col] = (
+            merged.loc[normal, abs_col] / merged.loc[normal, base_col]
+        )
         merged.loc[zero_pos, rel_col] = 10.0
         merged.loc[zero_zer, rel_col] = 0.0
 
@@ -281,6 +301,7 @@ def _calculate_relative_changes(
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
+
 
 def assess_wildfire(
     features: gpd.GeoDataFrame,
@@ -361,7 +382,9 @@ def assess_wildfire(
                 out_col = f"wildfire_{scenario_clean}_{window_name}_{stat}"
                 all_columns[out_col] = yearly[col].rename(out_col)
 
-        if scenario == "historical" and "recent" in scenario_aggregated.get("historical", {}):
+        if scenario == "historical" and "recent" in scenario_aggregated.get(
+            "historical", {}
+        ):
             hist_recent = scenario_aggregated["historical"]["recent"]
 
     # --- Pass 2: relative changes ---
@@ -372,10 +395,16 @@ def assess_wildfire(
             if scenario_clean == "historical":
                 continue
             for future_window, future_agg in windows.items():
-                changes = _calculate_relative_changes(hist_recent, future_agg, future_window)
-                yearly_ch = changes[changes["month_name"] == "Yearly"].set_index("osm_id")
+                changes = _calculate_relative_changes(
+                    hist_recent, future_agg, future_window
+                )
+                yearly_ch = changes[changes["month_name"] == "Yearly"].set_index(
+                    "osm_id"
+                )
                 for col in yearly_ch.columns:
-                    if not (col.startswith("abs_change") or col.startswith("rel_change")):
+                    if not (
+                        col.startswith("abs_change") or col.startswith("rel_change")
+                    ):
                         continue
                     out_col = f"wildfire_{scenario_clean}_{col}"
                     all_columns[out_col] = yearly_ch[col].rename(out_col)
