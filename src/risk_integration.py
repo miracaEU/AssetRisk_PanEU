@@ -28,65 +28,6 @@ from damagescanner.vector import _get_cell_area_m2
 
 
 # ---------------------------------------------------------------------------
-# Geometry helpers — fix MultiLineString/MultiPolygon for damagescanner
-# ---------------------------------------------------------------------------
-
-def explode_multi(features: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    """
-    Explode Multi* geometries into individual parts before passing to VectorScanner.
-
-    damagescanner's _convert_to_meters does ``line_string[0]`` which crashes
-    on MultiLineString. Exploding first turns each multi-part feature into
-    individual rows, which are re-aggregated after damage calculation.
-
-    Adds a '_orig_idx' column tracking the original index so reaggregate_damage
-    can sum the parts back up.
-    """
-    multi_types = ("MultiLineString", "MultiPolygon", "MultiPoint", "GeometryCollection")
-    if not features.geometry.geom_type.isin(multi_types).any():
-        features = features.copy()
-        features["_orig_idx"] = features.index
-        return features
-
-    exploded = features.copy()
-    exploded["_orig_idx"] = exploded.index
-    exploded = exploded.explode(index_parts=False).reset_index(drop=True)
-    return exploded
-
-
-def reaggregate_damage(
-    result: gpd.GeoDataFrame,
-    original_features: gpd.GeoDataFrame,
-) -> gpd.GeoDataFrame:
-    """
-    Re-aggregate exploded damage results back to the original feature index.
-
-    Damage values are summed across exploded parts; geometry and metadata
-    columns keep the first value.
-    """
-    if "_orig_idx" not in result.columns:
-        return result
-
-    meta_cols   = {"geometry", "object_type", "osm_id", "LAU", "NUTS2", "CNTR_CODE"}
-    damage_cols = [c for c in result.columns
-                   if c not in meta_cols and c != "_orig_idx"]
-
-    agg = {col: "first" for col in meta_cols if col in result.columns}
-    agg.update({col: "sum" for col in damage_cols})
-
-    aggregated = result.groupby("_orig_idx").agg(agg)
-    aggregated.index.name = None
-
-    # Restore rows with no damage (zero-fill)
-    aggregated = aggregated.reindex(original_features.index)
-    for col in ("damage_mean", "damage_min", "damage_max"):
-        if col in aggregated.columns:
-            aggregated[col] = aggregated[col].fillna(0.0)
-
-    return aggregated
-
-
-# ---------------------------------------------------------------------------
 # Damage calculation per return period
 # ---------------------------------------------------------------------------
 

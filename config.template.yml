@@ -1,14 +1,36 @@
-# MIRACA pipeline configuration template.
-# Copy this file to config.yml and fill in the paths for your machine.
-# config.yml is gitignored and should never be committed.
+# config.template.yml
+# Copy this to config.yml and fill in your local paths.
+# config.yml is gitignored and never committed.
 
-exposure_dir: /path/to/exposure/files
-output_dir: /path/to/output
-river_hazard_dir: /path/to/hazard/river
-wind_hazard_dir: /path/to/hazard/wind
-eq_hazard_dir: /path/to/hazard/earthquakes
-vulnerability_path: /path/to/repo/data/Table_D2_Hazard_Fragility_and_Vulnerability_Curves_V1.1.0_conversions.xlsx
-fragility_path: /path/to/repo/data/EQ_fragility.xlsx
-protection_standard_path: /path/to/hazard/floodProtection_v2019_paper3.tif
-basin_data_path: /path/to/repo/data/basins_abs_shift_return_periods.parquet
+# ── Exposure database ────────────────────────────────────────────────────────
+exposure_dir: "FILL_IN"
+
+# ── Risk pipeline outputs ────────────────────────────────────────────────────
+output_dir: "FILL_IN"
+
+# ── Exposure pipeline outputs ────────────────────────────────────────────────
+exposure_output_dir: "FILL_IN"
+
+# ── Risk hazard data ─────────────────────────────────────────────────────────
+river_hazard_dir: "FILL_IN"
+wind_hazard_dir: "FILL_IN"
+eq_hazard_dir: "FILL_IN"
+
+# ── Risk vulnerability / fragility curves ───────────────────────────────────
+vulnerability_path: "FILL_IN"
+fragility_path: "FILL_IN"
+
+# ── Flood protection standards ───────────────────────────────────────────────
+protection_standard_path: "FILL_IN"
+
+# ── Climate basin data (future river scenarios) ──────────────────────────────
+basin_data_path: "FILL_IN"
+
+# ── Coastal STAC ─────────────────────────────────────────────────────────────
 coastal_stac_url: "https://storage.googleapis.com/coclico-data-public/coclico/coclico-stac/catalog.json"
+
+# ── Exposure hazard data ─────────────────────────────────────────────────────
+heat_hazard_dir: "FILL_IN"
+wildfire_hazard_dir: "FILL_IN"
+landslide_path: "FILL_IN"      # path to elsus_v2.asc
+nuts2_path: "FILL_IN"          # path to NUTS_RG_20M_2024_3035.geojson
