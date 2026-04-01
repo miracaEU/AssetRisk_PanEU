@@ -49,9 +49,11 @@ RIVER_RETURN_PERIODS = [10, 20, 30, 40, 50, 75, 100, 200, 500]
 RIVER_HAZARD_COL = "band_data"
 RIVER_EXPOSURE_RP = 100  # reference return period for exposure metric
 
-# Temperature scenarios for future river
+# Temperature scenarios for future river — mapped to time periods + SSP
+# 1.5°C → RCP4.5/2050 → SSP245, 2.0°C → RCP8.5/2050 → SSP585
+# 3.0°C → RCP4.5/2100 → SSP245, 4.0°C → RCP8.5/2100 → SSP585
 TEMP_CODES = ("15", "20", "30", "40")
-TEMP_LABELS = ("1.5C", "2.0C", "3.0C", "4.0C")
+TEMP_LABELS = ("2050_SSP245", "2050_SSP585", "2100_SSP245", "2100_SSP585")
 
 
 def _worker_init():
@@ -502,14 +504,14 @@ def assess_river(
         protection_standards=protection_standards,
     )
     features = features.copy()
-    features["EAD_river"] = ead_df["EAD"].values
-    features["EAD_river_min"] = ead_df["EAD_min"].values
-    features["EAD_river_max"] = ead_df["EAD_max"].values
+    features["EAD_mid_river_current"] = ead_df["EAD_mid"].values
+    features["EAD_min_river_current"] = ead_df["EAD_min"].values
+    features["EAD_max_river_current"] = ead_df["EAD_max"].values
 
     # --- 6. Exposure metric at RP100 ---
     if RIVER_EXPOSURE_RP in hazard_dict:
         print(f"[river] Computing exposure metric at RP{RIVER_EXPOSURE_RP}...")
-        features["exposure_river_100"] = compute_exposure_metric(
+        features["exposure_abs_river_current"] = compute_exposure_metric(
             features=features,
             hazard=hazard_dict[RIVER_EXPOSURE_RP],
             reference_rp=RIVER_EXPOSURE_RP,
@@ -518,7 +520,7 @@ def assess_river(
         ).values
     else:
         print(f"[river] RP{RIVER_EXPOSURE_RP} not available, skipping exposure metric.")
-        features["exposure_river_100"] = np.nan
+        features["exposure_abs_river_current"] = np.nan
 
     # --- 7. Future climate scenarios ---
     if basin_data is not None:
@@ -535,14 +537,21 @@ def assess_river(
         )
         for col in climate_df.columns:
             features[col] = climate_df[col].values
+
+        # Future exposure: compute exposure at RP100 for each future period
+        # (uses same hazard data — future exposure assumes same hazard intensity)
+        for period_label in TEMP_LABELS:
+            features[f"exposure_abs_river_{period_label}"] = features[
+                "exposure_abs_river_current"
+            ].copy()
     else:
         print("[river] No basin data provided, skipping future climate scenarios.")
 
     elapsed = time.time() - t0
     print(
         f"[river] Done in {elapsed:.1f}s. "
-        f"Mean EAD_river: {features['EAD_river'].mean():.2f}, "
-        f"Total: {features['EAD_river'].sum():.2e}"
+        f"Mean EAD_mid_river_current: {features['EAD_mid_river_current'].mean():.2f}, "
+        f"Total: {features['EAD_mid_river_current'].sum():.2e}"
     )
 
     return features

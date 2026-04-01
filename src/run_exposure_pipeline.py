@@ -27,6 +27,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import geopandas as gpd
+import pandas as pd
 
 from exposure_utils import (
     load_config,
@@ -122,10 +123,13 @@ def run_single(
     iso2 = to_iso2(country_iso3)
     tag = f"{country_iso3}/{asset_type}"
 
-    # Output path
+    # Output path — use system name for dashboard compatibility
+    from constants import to_system_name
+
+    system = to_system_name(asset_type)
     out_dir = Path(config["exposure_output_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{country_iso3}_{asset_type}_exposure.parquet"
+    out_path = out_dir / f"{country_iso3}_{system}_exposure.parquet"
 
     if out_path.exists():
         print(f"[{tag}] Skipping — output already exists: {out_path.name}")
@@ -180,11 +184,7 @@ def run_single(
             try:
                 enriched = assess_landslide(features, landslide_path, asset_type)
                 for col in [
-                    "landslide_min",
-                    "landslide_avg",
-                    "landslide_max",
-                    "landslide_exposure",
-                    "landslide_max_cat",
+                    "exposure_abs_landslide_current",
                 ]:
                     if col in enriched.columns:
                         all_columns[col] = enriched.set_index("osm_id")[col]
@@ -250,6 +250,36 @@ def run_single(
         output = output.join(series, how="left")
 
     output = gpd.GeoDataFrame(output, geometry="geometry", crs=features.crs)
+
+    # Compute asset_size from geometry (in metric CRS)
+    output_metric = output.to_crs(epsg=3035)
+    geom_types = output_metric.geometry.geom_type
+    asset_size = pd.Series(0.0, index=output.index)
+
+    is_line = geom_types.isin(["LineString", "MultiLineString"])
+    is_poly = geom_types.isin(["Polygon", "MultiPolygon"])
+    is_point = ~is_line & ~is_poly
+
+    if is_line.any():
+        asset_size[is_line] = output_metric.geometry[is_line].length
+    if is_poly.any():
+        asset_size[is_poly] = output_metric.geometry[is_poly].area
+    if is_point.any():
+        asset_size[is_point] = 1.0
+
+    output["asset_size"] = asset_size.values
+
+    # Compute exposure_rel = exposure_abs / asset_size for all exposure_abs columns
+    for col in list(output.columns):
+        if col.startswith("exposure_abs_"):
+            rel_col = col.replace("exposure_abs_", "exposure_rel_")
+            output[rel_col] = 0.0
+            nonzero = output["asset_size"] > 0
+            output.loc[nonzero, rel_col] = (
+                output.loc[nonzero, col] / output.loc[nonzero, "asset_size"]
+            )
+
+    output = output.reset_index(drop=True)
     output.to_parquet(out_path)
 
     elapsed = time.time() - t0
@@ -358,7 +388,6 @@ def run_pipeline(
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(

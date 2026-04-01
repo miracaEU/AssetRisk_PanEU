@@ -479,53 +479,61 @@ class Config:
 
 # All EAD columns that must be present for a file to be considered complete
 COMPLETE_EAD_COLS = [
-    "EAD_river",
-    "EAD_river_min",
-    "EAD_river_max",
-    "exposure_river_100",
-    "EAD_river_1.5C",
-    "EAD_river_1.5C_min",
-    "EAD_river_1.5C_max",
-    "EAD_river_2.0C",
-    "EAD_river_2.0C_min",
-    "EAD_river_2.0C_max",
-    "EAD_river_3.0C",
-    "EAD_river_3.0C_min",
-    "EAD_river_3.0C_max",
-    "EAD_river_4.0C",
-    "EAD_river_4.0C_min",
-    "EAD_river_4.0C_max",
-    "EAD_coastal",
-    "EAD_coastal_min",
-    "EAD_coastal_max",
-    "EAD_coastal_2050_SSP245",
-    "EAD_coastal_2050_SSP245_min",
-    "EAD_coastal_2050_SSP245_max",
-    "EAD_coastal_2050_SSP585",
-    "EAD_coastal_2050_SSP585_min",
-    "EAD_coastal_2050_SSP585_max",
-    "EAD_coastal_2100_SSP245",
-    "EAD_coastal_2100_SSP245_min",
-    "EAD_coastal_2100_SSP245_max",
-    "EAD_coastal_2100_SSP585",
-    "EAD_coastal_2100_SSP585_min",
-    "EAD_coastal_2100_SSP585_max",
-    "exposure_coastal_100",
-    "EAD_windstorm",
-    "EAD_windstorm_min",
-    "EAD_windstorm_max",
-    "exposure_wind_100",
-    "EAD_earthquake",
-    "EAD_earthquake_min",
-    "EAD_earthquake_max",
-    "exposure_eq_475",
+    # River flood — current
+    "EAD_mid_river_current",
+    "EAD_min_river_current",
+    "EAD_max_river_current",
+    "exposure_abs_river_current",
+    # River flood — future (4 scenarios)
+    "EAD_mid_river_2050_SSP245",
+    "EAD_min_river_2050_SSP245",
+    "EAD_max_river_2050_SSP245",
+    "EAD_mid_river_2050_SSP585",
+    "EAD_min_river_2050_SSP585",
+    "EAD_max_river_2050_SSP585",
+    "EAD_mid_river_2100_SSP245",
+    "EAD_min_river_2100_SSP245",
+    "EAD_max_river_2100_SSP245",
+    "EAD_mid_river_2100_SSP585",
+    "EAD_min_river_2100_SSP585",
+    "EAD_max_river_2100_SSP585",
+    # Coastal flood
+    "EAD_mid_coastal_current",
+    "EAD_min_coastal_current",
+    "EAD_max_coastal_current",
+    "EAD_mid_coastal_2050_SSP245",
+    "EAD_min_coastal_2050_SSP245",
+    "EAD_max_coastal_2050_SSP245",
+    "EAD_mid_coastal_2050_SSP585",
+    "EAD_min_coastal_2050_SSP585",
+    "EAD_max_coastal_2050_SSP585",
+    "EAD_mid_coastal_2100_SSP245",
+    "EAD_min_coastal_2100_SSP245",
+    "EAD_max_coastal_2100_SSP245",
+    "EAD_mid_coastal_2100_SSP585",
+    "EAD_min_coastal_2100_SSP585",
+    "EAD_max_coastal_2100_SSP585",
+    "exposure_abs_coastal_current",
+    # Windstorm
+    "EAD_mid_windstorm_current",
+    "EAD_min_windstorm_current",
+    "EAD_max_windstorm_current",
+    "exposure_abs_windstorm_current",
+    # Earthquake
+    "EAD_mid_earthquake_current",
+    "EAD_min_earthquake_current",
+    "EAD_max_earthquake_current",
+    "exposure_abs_earthquake_current",
 ]
 
 
 def output_path(output_dir: Path, country_iso2: str, asset_type: str) -> Path:
     """Generate output file path for a country + asset combination."""
+    from constants import to_system_name
+
     iso3 = to_iso3(country_iso2)
-    return output_dir / f"{iso3}_{asset_type}_risk.parquet"
+    system = to_system_name(asset_type)
+    return output_dir / f"{iso3}_{system}_hazards.parquet"
 
 
 def is_complete(path: Path) -> bool:
@@ -669,12 +677,41 @@ def run_single(
                 n_workers=inner_workers,
             )
 
-        # --- 7. Save output ---
+        # --- 7. Compute asset_size and exposure_rel columns ---
+        print("[pipeline] Computing asset_size and relative exposure columns...")
+        features_metric = features.to_crs(epsg=3035)
+        geom_types = features_metric.geometry.geom_type
+        asset_size = pd.Series(0.0, index=features.index)
+
+        is_line = geom_types.isin(["LineString", "MultiLineString"])
+        is_poly = geom_types.isin(["Polygon", "MultiPolygon"])
+        is_point = ~is_line & ~is_poly
+
+        if is_line.any():
+            asset_size[is_line] = features_metric.geometry[is_line].length
+        if is_poly.any():
+            asset_size[is_poly] = features_metric.geometry[is_poly].area
+        if is_point.any():
+            asset_size[is_point] = 1.0
+
+        features["asset_size"] = asset_size.values
+
+        # Compute exposure_rel = exposure_abs / asset_size for all exposure_abs columns
+        for col in list(features.columns):
+            if col.startswith("exposure_abs_"):
+                rel_col = col.replace("exposure_abs_", "exposure_rel_")
+                features[rel_col] = 0.0
+                nonzero = features["asset_size"] > 0
+                features.loc[nonzero, rel_col] = (
+                    features.loc[nonzero, col] / features.loc[nonzero, "asset_size"]
+                )
+
+        # --- 8. Save output ---
         config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         features.to_parquet(str(out_path))
         print(f"[pipeline] Saved to {out_path}")
 
-        # --- 8. Summary stats ---
+        # --- 9. Summary stats ---
         elapsed = time.time() - t0
         stats = {
             "label": label,
@@ -686,7 +723,7 @@ def run_single(
         ead_cols = [
             c
             for c in features.columns
-            if c.startswith("EAD_") and not c.endswith(("_min", "_max"))
+            if c.startswith("EAD_mid_")
         ]
         for col in ead_cols:
             stats[f"total_{col}"] = float(features[col].sum())
@@ -710,7 +747,7 @@ def _print_summary(label: str, features: gpd.GeoDataFrame, elapsed: float):
     ead_cols = [
         c
         for c in features.columns
-        if c.startswith("EAD_") and not c.endswith(("_min", "_max"))
+        if c.startswith("EAD_mid_")
     ]
     for col in ead_cols:
         total = features[col].sum()

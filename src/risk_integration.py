@@ -239,7 +239,7 @@ def collect_ead_per_asset(
         ead_max[i] = hi
 
     return pd.DataFrame(
-        {"EAD": ead_mean, "EAD_min": ead_min, "EAD_max": ead_max},
+        {"EAD_mid": ead_mean, "EAD_min": ead_min, "EAD_max": ead_max},
         index=features.index,
     )
 
@@ -391,7 +391,7 @@ def collect_ead_climate_scenarios(
     basin_ids: pd.Series,
     protection_standards: Optional[pd.Series] = None,
     temp_scenarios: tuple[str, ...] = ("15", "20", "30", "40"),
-    temp_labels: tuple[str, ...] = ("1.5C", "2.0C", "3.0C", "4.0C"),
+    temp_labels: tuple[str, ...] = ("2050_SSP245", "2050_SSP585", "2100_SSP245", "2100_SSP585"),
     damage_col_mean: str = "damage_mean",
     damage_col_min: str = "damage_min",
     damage_col_max: str = "damage_max",
@@ -415,7 +415,7 @@ def collect_ead_climate_scenarios(
         temp_labels:         Output column labels ('1.5C','2.0C','3.0C','4.0C')
 
     Returns:
-        DataFrame with columns [EAD_river_{label}, EAD_river_{label}_min, EAD_river_{label}_max]
+        DataFrame with columns [EAD_mid_river_{period}, EAD_min_river_{period}, EAD_max_river_{period}]
         for each temperature scenario, indexed like features
     """
     sorted_rps = sorted(rp_results.keys())
@@ -474,8 +474,8 @@ def collect_ead_climate_scenarios(
             ead_min[i] = lo
             ead_max[i] = hi
 
-        output[f"EAD_river_{temp_label}"] = ead_mean
-        output[f"EAD_river_{temp_label}_min"] = ead_min
-        output[f"EAD_river_{temp_label}_max"] = ead_max
+        output[f"EAD_mid_river_{temp_label}"] = ead_mean
+        output[f"EAD_min_river_{temp_label}"] = ead_min
+        output[f"EAD_max_river_{temp_label}"] = ead_max
 
     return pd.DataFrame(output, index=features.index)

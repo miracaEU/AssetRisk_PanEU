@@ -558,10 +558,10 @@ def assess_earthquake(
         )
     except ValueError as e:
         print(f"[earthquake] {e} — skipping earthquake for this asset type.")
-        features["EAD_earthquake"] = np.nan
-        features["EAD_earthquake_min"] = np.nan
-        features["EAD_earthquake_max"] = np.nan
-        features["exposure_eq_475"] = np.nan
+        features["EAD_mid_earthquake_current"] = np.nan
+        features["EAD_min_earthquake_current"] = np.nan
+        features["EAD_max_earthquake_current"] = np.nan
+        features["exposure_abs_earthquake_current"] = np.nan
         return features
 
     # --- 2. Hazard data ---
@@ -572,10 +572,10 @@ def assess_earthquake(
 
     if not hazard_dict:
         print("[earthquake] No hazard data found. Returning features unchanged.")
-        features["EAD_earthquake"] = np.nan
-        features["EAD_earthquake_min"] = np.nan
-        features["EAD_earthquake_max"] = np.nan
-        features["exposure_eq_475"] = np.nan
+        features["EAD_mid_earthquake_current"] = np.nan
+        features["EAD_min_earthquake_current"] = np.nan
+        features["EAD_max_earthquake_current"] = np.nan
+        features["exposure_abs_earthquake_current"] = np.nan
         return features
 
     available_rps = sorted(hazard_dict.keys())
@@ -611,10 +611,10 @@ def assess_earthquake(
 
     if not rp_results:
         print("[earthquake] No damage computed.")
-        features["EAD_earthquake"] = 0.0
-        features["EAD_earthquake_min"] = 0.0
-        features["EAD_earthquake_max"] = 0.0
-        features["exposure_eq_475"] = 0.0
+        features["EAD_mid_earthquake_current"] = 0.0
+        features["EAD_min_earthquake_current"] = 0.0
+        features["EAD_max_earthquake_current"] = 0.0
+        features["exposure_abs_earthquake_current"] = 0.0
         return features
 
     # --- 4. Integrate EAD ---
@@ -626,9 +626,9 @@ def assess_earthquake(
     )
 
     features = features.copy()
-    features["EAD_earthquake"] = ead_df["EAD"].values
-    features["EAD_earthquake_min"] = ead_df["EAD_min"].values
-    features["EAD_earthquake_max"] = ead_df["EAD_max"].values
+    features["EAD_mid_earthquake_current"] = ead_df["EAD_mid"].values
+    features["EAD_min_earthquake_current"] = ead_df["EAD_min"].values
+    features["EAD_max_earthquake_current"] = ead_df["EAD_max"].values
 
     # --- 5. Exposure metric at RP475 (count/length/area where PGA > threshold) ---
     if EQ_EXPOSURE_RP in hazard_dict:
@@ -636,7 +636,7 @@ def assess_earthquake(
             f"[earthquake] Computing exposure metric at RP{EQ_EXPOSURE_RP} "
             f"(PGA > {pga_threshold}g)..."
         )
-        features["exposure_eq_475"] = compute_exposure_metric(
+        features["exposure_abs_earthquake_current"] = compute_exposure_metric(
             features=features,
             hazard=hazard_dict[EQ_EXPOSURE_RP],
             reference_rp=EQ_EXPOSURE_RP,
@@ -647,13 +647,13 @@ def assess_earthquake(
         print(
             f"[earthquake] RP{EQ_EXPOSURE_RP} not available, skipping exposure metric."
         )
-        features["exposure_eq_475"] = np.nan
+        features["exposure_abs_earthquake_current"] = np.nan
 
     elapsed = time.time() - t0
     print(
         f"[earthquake] Done in {elapsed:.1f}s. "
-        f"Mean EAD_earthquake: {features['EAD_earthquake'].mean():.2f}, "
-        f"Total: {features['EAD_earthquake'].sum():.2e}"
+        f"Mean EAD_mid_earthquake_current: {features['EAD_mid_earthquake_current'].mean():.2f}, "
+        f"Total: {features['EAD_mid_earthquake_current'].sum():.2e}"
     )
 
     return features

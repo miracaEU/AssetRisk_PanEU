@@ -195,18 +195,14 @@ def assess_landslide(
 
     # Merge back to original features (preserving original CRS)
     features = features.copy()
-    features["landslide_min"] = stats["min_susceptibility"].values
-    features["landslide_avg"] = stats["avg_susceptibility"].values
-    features["landslide_max"] = stats["max_susceptibility"].values
-    features["landslide_exposure"] = stats["total_exposure"].values
-    features["landslide_max_cat"] = stats["max_cat_exposure"].values
+    features["exposure_abs_landslide_current"] = stats["total_exposure"].values
 
     elapsed = time.time() - t0
-    n_exposed = (features["landslide_max"] > 0).sum()
+    n_exposed = (stats["max_susceptibility"] > 0).sum()
     print(
         f"[landslide] Done in {elapsed:.1f}s. "
         f"{n_exposed}/{len(features)} features exposed. "
-        f"Mean susceptibility: {features['landslide_avg'].mean():.2f}"
+        f"Mean susceptibility: {stats['avg_susceptibility'].mean():.2f}"
     )
 
     return features

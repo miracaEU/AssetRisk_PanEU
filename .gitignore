@@ -1,5 +1,10 @@
 **/*.pyc
 
+.git/
+.github/
+.venv/
+.vscode/
+
 data/
 figures/
 results/

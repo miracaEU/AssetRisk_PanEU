@@ -63,13 +63,14 @@ COASTAL_COLLECTION = "cfhp_all"
 COASTAL_RETURN_PERIODS = [10, 25, 50, 100, 250, 500, 1000]
 COASTAL_EXPOSURE_RP = 100
 
-# (time_horizon, climate_scenario) → output column label
+# (time_horizon, climate_scenario) → output column label prefix
+# The full columns will be: {label}_mid, {label}_min, {label}_max
 COASTAL_SCENARIOS = {
-    ("2010", "None"): "EAD_coastal",
-    ("2050", "SSP245"): "EAD_coastal_2050_SSP245",
-    ("2050", "SSP585"): "EAD_coastal_2050_SSP585",
-    ("2100", "SSP245"): "EAD_coastal_2100_SSP245",
-    ("2100", "SSP585"): "EAD_coastal_2100_SSP585",
+    ("2010", "None"): "EAD_mid_coastal_current",
+    ("2050", "SSP245"): "EAD_mid_coastal_2050_SSP245",
+    ("2050", "SSP585"): "EAD_mid_coastal_2050_SSP585",
+    ("2100", "SSP245"): "EAD_mid_coastal_2100_SSP245",
+    ("2100", "SSP585"): "EAD_mid_coastal_2100_SSP585",
 }
 
 # Unique key for aggregating damage — osm_id alone is insufficient
@@ -362,9 +363,11 @@ def _run_coastal_scenario(
 
     if not rp_damage:
         features = features.copy()
+        col_min = col_label.replace("EAD_mid_", "EAD_min_")
+        col_max = col_label.replace("EAD_mid_", "EAD_max_")
         features[col_label] = 0.0
-        features[f"{col_label}_min"] = 0.0
-        features[f"{col_label}_max"] = 0.0
+        features[col_min] = 0.0
+        features[col_max] = 0.0
         return features, exposure_series
 
     # --- Aggregate tile damages per RP by (osm_id, LAU) ---
@@ -407,9 +410,11 @@ def _run_coastal_scenario(
     )
 
     features = features.copy()
-    features[col_label] = ead_df["EAD"].values
-    features[f"{col_label}_min"] = ead_df["EAD_min"].values
-    features[f"{col_label}_max"] = ead_df["EAD_max"].values
+    col_min = col_label.replace("EAD_mid_", "EAD_min_")
+    col_max = col_label.replace("EAD_mid_", "EAD_max_")
+    features[col_label] = ead_df["EAD_mid"].values
+    features[col_min] = ead_df["EAD_min"].values
+    features[col_max] = ead_df["EAD_max"].values
 
     print(f"  [coastal] Total {col_label}: {features[col_label].sum():.3e}")
     return features, exposure_series
@@ -474,6 +479,7 @@ def assess_coastal(
     for (time_horizon, climate_scenario), col_label in active_scenarios.items():
         is_baseline = time_horizon == "2010" and climate_scenario == "None"
 
+        # Compute exposure for all scenarios (not just baseline)
         features, exposure = _run_coastal_scenario(
             features=features,
             damage_curves=damage_curves,
@@ -485,21 +491,27 @@ def assess_coastal(
             climate_scenario=climate_scenario,
             stac_catalog_url=stac_catalog_url,
             col_label=col_label,
-            compute_exposure=is_baseline,
+            compute_exposure=True,
         )
 
-        # Attach exposure metric from baseline scenario
-        if is_baseline and exposure is not None:
-            if "exposure_coastal_100" not in features.columns:
-                features["exposure_coastal_100"] = exposure.reindex(
-                    features.index
-                ).values
+        # Derive exposure column name from scenario
+        if is_baseline:
+            exp_col = "exposure_abs_coastal_current"
+        else:
+            # e.g. "EAD_mid_coastal_2050_SSP245" → "exposure_abs_coastal_2050_SSP245"
+            suffix = col_label.replace("EAD_mid_coastal_", "")
+            exp_col = f"exposure_abs_coastal_{suffix}"
+
+        if exposure is not None:
+            features[exp_col] = exposure.reindex(features.index).values
+        else:
+            features[exp_col] = 0.0
 
         gc.collect()
 
-    # Fallback if exposure metric was never set (e.g. no baseline tiles found)
-    if "exposure_coastal_100" not in features.columns:
-        features["exposure_coastal_100"] = np.nan
+    # Fallback for any missing exposure columns
+    if "exposure_abs_coastal_current" not in features.columns:
+        features["exposure_abs_coastal_current"] = np.nan
 
     elapsed = time.time() - t0
     print(f"\n[coastal] All scenarios completed in {elapsed / 60:.1f} min")

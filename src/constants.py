@@ -61,6 +61,67 @@ ISO3_TO_ISO2 = {
 ISO2_TO_ISO3 = {v: k for k, v in ISO3_TO_ISO2.items()}
 
 # ---------------------------------------------------------------------------
+# Dashboard system name mapping
+# Maps internal asset type names → dashboard system names used in output
+# file and column naming.
+# ---------------------------------------------------------------------------
+
+SYSTEM_NAME_MAP = {
+    "roads": "roads",
+    "main_roads": "roads",
+    "rail": "rail",
+    "air": "airports",
+    "telecom": "telecom",
+    "education": "education",
+    "healthcare": "healthcare",
+    "power": "power",
+    "gas": "gas",
+    "oil": "oil",
+    "ports": "ports",
+}
+
+
+def to_system_name(asset_type: str) -> str:
+    """Convert internal asset type name to dashboard system name."""
+    return SYSTEM_NAME_MAP.get(asset_type, asset_type)
+
+
+# ---------------------------------------------------------------------------
+# River future scenario mapping: temperature codes → time periods + SSP
+# ---------------------------------------------------------------------------
+
+# The basin climate data uses temperature labels (1.5C, 2.0C, 3.0C, 4.0C).
+# The dashboard uses time periods + SSP scenarios, aligned with coastal:
+#   1.5°C → RCP4.5 / 2050 → SSP245
+#   2.0°C → RCP8.5 / 2050 → SSP585
+#   3.0°C → RCP4.5 / 2100 → SSP245
+#   4.0°C → RCP8.5 / 2100 → SSP585
+
+RIVER_FUTURE_TEMP_CODES = ("15", "20", "30", "40")
+RIVER_FUTURE_TEMP_LABELS = ("2050_SSP245", "2050_SSP585", "2100_SSP245", "2100_SSP585")
+
+# ---------------------------------------------------------------------------
+# RCP → SSP scenario mapping (for heat / wildfire exposure)
+# ---------------------------------------------------------------------------
+
+RCP_TO_SSP = {
+    "rcp_4_5": "SSP245",
+    "rcp_8_5": "SSP585",
+}
+
+# ---------------------------------------------------------------------------
+# Exposure time window → dashboard period mapping (for heat / wildfire)
+# ---------------------------------------------------------------------------
+
+WINDOW_TO_PERIOD = {
+    "recent": "current",
+    "near_future": None,       # dropped — no dashboard equivalent
+    "mid_future": "2050",      # 2041-2060 → "2050"
+    "far_future": "2100",      # 2061-2080 → "2100"
+    "distant_future": None,    # dropped — no dashboard equivalent
+}
+
+# ---------------------------------------------------------------------------
 # Maximum damage values per asset type
 # Format: {object_type: [min, mean, max]}  (€/m for lines, €/m² for polygons,
 #                                           €/unit for points)

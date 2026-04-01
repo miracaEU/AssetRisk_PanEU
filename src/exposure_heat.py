@@ -343,8 +343,14 @@ def assess_heat(
 
     Returns:
         Dict: output column name → pd.Series indexed by osm_id (yearly totals)
-        Includes both exposure values and relative/absolute changes.
+        Column names follow dashboard convention:
+          exposure_abs_heat_current
+          exposure_abs_heat_2050_SSP245
+          exposure_abs_heat_2100_SSP585
+          etc.
     """
+    from constants import RCP_TO_SSP, WINDOW_TO_PERIOD
+
     t0 = time.time()
     print(f"[heat] Starting for {asset_type} ({len(features)} features)")
 
@@ -403,14 +409,33 @@ def assess_heat(
                 agg = _aggregate_models(window_dfs, window_name)
                 scenario_aggregated[scenario_clean][window_name] = agg
 
+                # Map window → dashboard period
+                period = WINDOW_TO_PERIOD.get(window_name)
+                if period is None:
+                    continue  # skip windows without dashboard mapping
+
+                # Map RCP scenario → SSP label
+                ssp = RCP_TO_SSP.get(scenario_clean)
+
+                # Build dashboard column name suffix
+                if period == "current":
+                    suffix = "current"
+                elif ssp:
+                    suffix = f"{period}_{ssp}"
+                else:
+                    # Future window from historical scenario — skip
+                    continue
+
                 yearly = agg[agg["month_name"] == "Yearly"].set_index("osm_id")
                 for col in yearly.columns:
                     if not col.startswith("avg_days"):
                         continue
-                    stat = col.split("_")[-1]
-                    out_col = (
-                        f"heat_{threshold_clean}_{scenario_clean}_{window_name}_{stat}"
-                    )
+                    stat = col.split("_")[-1]  # mean, min, or max
+                    if stat == "mean":
+                        out_col = f"exposure_abs_heat_{suffix}"
+                    else:
+                        # min/max only exist for multi-model future — skip for dashboard
+                        continue
                     all_columns[out_col] = yearly[col].rename(out_col)
 
             if scenario == "historical" and "recent" in scenario_aggregated.get(
@@ -418,30 +443,9 @@ def assess_heat(
             ):
                 hist_recent = scenario_aggregated["historical"]["recent"]
 
-        # --- Pass 2: relative changes ---
-        if hist_recent is None:
-            print(
-                f"[heat] No historical/recent data for {threshold_clean} — skipping relative changes"
-            )
-            continue
-
-        for scenario_clean, windows in scenario_aggregated.items():
-            if scenario_clean == "historical":
-                continue
-            for future_window, future_agg in windows.items():
-                changes = _calculate_relative_changes(
-                    hist_recent, future_agg, future_window
-                )
-                yearly_ch = changes[changes["month_name"] == "Yearly"].set_index(
-                    "osm_id"
-                )
-                for col in yearly_ch.columns:
-                    if not (
-                        col.startswith("abs_change") or col.startswith("rel_change")
-                    ):
-                        continue
-                    out_col = f"heat_{threshold_clean}_{scenario_clean}_{col}"
-                    all_columns[out_col] = yearly_ch[col].rename(out_col)
+        # Pass 2: relative changes are now computed in the pipeline runner
+        # (exposure_rel = exposure_abs / asset_size), so we skip the old
+        # abs_change / rel_change columns here.
 
     elapsed = time.time() - t0
     print(f"[heat] Done in {elapsed:.1f}s — {len(all_columns)} columns")

@@ -250,10 +250,10 @@ def assess_windstorm(
         )
     except ValueError as e:
         print(f"[windstorm] {e} — skipping windstorm for this asset type.")
-        features["EAD_windstorm"] = np.nan
-        features["EAD_windstorm_min"] = np.nan
-        features["EAD_windstorm_max"] = np.nan
-        features["exposure_wind_100"] = np.nan
+        features["EAD_mid_windstorm_current"] = np.nan
+        features["EAD_min_windstorm_current"] = np.nan
+        features["EAD_max_windstorm_current"] = np.nan
+        features["exposure_abs_windstorm_current"] = np.nan
         return features
 
     # --- 2. Hazard data ---
@@ -264,10 +264,10 @@ def assess_windstorm(
 
     if not hazard_dict:
         print("[windstorm] No hazard data found. Returning features unchanged.")
-        features["EAD_windstorm"] = np.nan
-        features["EAD_windstorm_min"] = np.nan
-        features["EAD_windstorm_max"] = np.nan
-        features["exposure_wind_100"] = np.nan
+        features["EAD_mid_windstorm_current"] = np.nan
+        features["EAD_min_windstorm_current"] = np.nan
+        features["EAD_max_windstorm_current"] = np.nan
+        features["exposure_abs_windstorm_current"] = np.nan
         return features
 
     available_rps = sorted(hazard_dict.keys())
@@ -310,13 +310,13 @@ def assess_windstorm(
 
     # Write results back onto the full features GeoDataFrame
     features = features.copy()
-    features["EAD_windstorm"] = 0.0
-    features["EAD_windstorm_min"] = 0.0
-    features["EAD_windstorm_max"] = 0.0
+    features["EAD_mid_windstorm_current"] = 0.0
+    features["EAD_min_windstorm_current"] = 0.0
+    features["EAD_max_windstorm_current"] = 0.0
 
-    features.loc[features_wind.index, "EAD_windstorm"] = ead_df["EAD"].values
-    features.loc[features_wind.index, "EAD_windstorm_min"] = ead_df["EAD_min"].values
-    features.loc[features_wind.index, "EAD_windstorm_max"] = ead_df["EAD_max"].values
+    features.loc[features_wind.index, "EAD_mid_windstorm_current"] = ead_df["EAD_mid"].values
+    features.loc[features_wind.index, "EAD_min_windstorm_current"] = ead_df["EAD_min"].values
+    features.loc[features_wind.index, "EAD_max_windstorm_current"] = ead_df["EAD_max"].values
 
     # --- 5. Exposure metric at RP100 ---
     if WIND_EXPOSURE_RP in hazard_dict:
@@ -328,19 +328,19 @@ def assess_windstorm(
             hazard_value_col=WIND_HAZARD_COL,
             pga_threshold=0.0,
         )
-        features["exposure_wind_100"] = 0.0
-        features.loc[features_wind.index, "exposure_wind_100"] = exposure.values
+        features["exposure_abs_windstorm_current"] = 0.0
+        features.loc[features_wind.index, "exposure_abs_windstorm_current"] = exposure.values
     else:
         print(
             f"[windstorm] RP{WIND_EXPOSURE_RP} not available, skipping exposure metric."
         )
-        features["exposure_wind_100"] = np.nan
+        features["exposure_abs_windstorm_current"] = np.nan
 
     elapsed = time.time() - t0
     print(
         f"[windstorm] Done in {elapsed:.1f}s. "
-        f"Mean EAD_windstorm: {features['EAD_windstorm'].mean():.2f}, "
-        f"Total: {features['EAD_windstorm'].sum():.2e}"
+        f"Mean EAD_mid_windstorm_current: {features['EAD_mid_windstorm_current'].mean():.2f}, "
+        f"Total: {features['EAD_mid_windstorm_current'].sum():.2e}"
     )
 
     return features
