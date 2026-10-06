@@ -29,8 +29,18 @@ basin_data_path: "FILL_IN"
 # ── Coastal STAC ─────────────────────────────────────────────────────────────
 coastal_stac_url: "https://storage.googleapis.com/coclico-data-public/coclico/coclico-stac/catalog.json"
 
+# ── OSM energy network (NetworkOSM CSVs) ─────────────────────────────────────
+networkosm_dir: "FILL_IN"   # path to NetworkOSM/ folder containing lines.csv + buses.csv
+
 # ── Exposure hazard data ─────────────────────────────────────────────────────
 heat_hazard_dir: "FILL_IN"
 wildfire_hazard_dir: "FILL_IN"
 landslide_path: "FILL_IN"      # path to elsus_v2.asc
 nuts2_path: "FILL_IN"          # path to NUTS_RG_20M_2024_3035.geojson
+coastpros_path: "FILL_IN"     # path to COASTPROS-EU.xlsx (coastal protection standards)
+
+# ── Heat indicator used in the paper (30C, 35C or 40C files are processed) ───
+heat_threshold: "35C"
+
+# ── TEN-T workflow only (src_tent/) ──────────────────────────────────────────
+tent_data_dir: "FILL_IN"

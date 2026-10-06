@@ -9,7 +9,7 @@ Takes a pre-loaded exposure GeoDataFrame and returns it enriched with:
 
 Hazard data: local GeoTIFFs, one per return period.
 Vulnerability: wind speed curves (W_Vuln_V10m_3sec sheet).
-No protection standards for windstorm.
+Design standard: RP50 for all asset types (IEC 60826 lower bound).
 """
 
 import time
@@ -27,6 +27,7 @@ from typing import Optional, Union
 from constants import (
     DICT_CIS_VULNERABILITY_WIND,
     INFRASTRUCTURE_DAMAGE_VALUES,
+    WIND_PROTECTION_STANDARD_RP,
 )
 
 from risk_integration import (
@@ -62,6 +63,7 @@ WIND_POWER_OBJECT_TYPES = {"line", "tower", "catenary_mast", "pole", "minor_line
 def prepare_wind_curves(
     asset_type: str,
     vulnerability_path: Union[str, Path],
+    maxdam_override: Optional[dict] = None,
 ) -> tuple[pd.DataFrame, dict, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Load and prepare wind vulnerability curves for an asset type.
@@ -69,6 +71,8 @@ def prepare_wind_curves(
     Args:
         asset_type:         Internal asset type name
         vulnerability_path: Path to vulnerability Excel file
+        maxdam_override:    If provided, use instead of INFRASTRUCTURE_DAMAGE_VALUES[asset_type].
+                            Same structure: {object_type: [min, mean, max]}.
 
     Returns:
         (damage_curves, multi_curves, maxdam_mean, maxdam_min, maxdam_max)
@@ -104,8 +108,8 @@ def prepare_wind_curves(
             curve_df[col] = curve_values
         multi_curves[curve_id] = curve_df.astype(np.float32)
 
-    # Min / mean / max maxdam
-    asset_maxdam = INFRASTRUCTURE_DAMAGE_VALUES.get(asset_type, {})
+    # Min / mean / max maxdam — use override if provided
+    asset_maxdam = maxdam_override if maxdam_override is not None else INFRASTRUCTURE_DAMAGE_VALUES.get(asset_type, {})
 
     def _make_maxdam(idx: int) -> pd.DataFrame:
         d = {k: v[idx] for k, v in asset_maxdam.items() if k in ci_system}
@@ -208,6 +212,7 @@ def assess_windstorm(
     object_curve_exclusions: Optional[dict] = None,
     return_periods: list[int] = WIND_RETURN_PERIODS,
     n_workers: Optional[int] = None,
+    maxdam_override: Optional[dict] = None,
 ) -> gpd.GeoDataFrame:
     """
     Assess windstorm risk for a pre-loaded exposure GeoDataFrame.
@@ -220,6 +225,8 @@ def assess_windstorm(
         object_curve_exclusions: {object_type: [curve_ids_to_exclude]}
         return_periods:          Return periods to assess
         n_workers:               Number of parallel workers (None = all CPUs)
+        maxdam_override:         Optional {object_type: [min, mean, max]} to replace
+                                 default INFRASTRUCTURE_DAMAGE_VALUES for this hazard only.
 
     Returns:
         Input GeoDataFrame enriched with:
@@ -246,7 +253,7 @@ def assess_windstorm(
     # --- 1. Vulnerability curves ---
     try:
         damage_curves, multi_curves, maxdam_mean, _, _ = prepare_wind_curves(
-            asset_type, vulnerability_path
+            asset_type, vulnerability_path, maxdam_override=maxdam_override
         )
     except ValueError as e:
         print(f"[windstorm] {e} — skipping windstorm for this asset type.")
@@ -300,12 +307,15 @@ def assess_windstorm(
 
     rp_results = {rp: df for rp, df in raw_results}
 
-    # --- 4. Integrate EAD (no protection standards for wind) ---
+    # --- 4. Integrate EAD (RP50 design standard per IEC 60826 lower bound) ---
     print("[windstorm] Integrating EAD...")
+    wind_protection = pd.Series(
+        WIND_PROTECTION_STANDARD_RP, index=features_wind.index, dtype=float
+    )
     ead_df = collect_ead_per_asset(
         rp_results=rp_results,
         features=features_wind,
-        protection_standards=None,
+        protection_standards=wind_protection,
     )
 
     # Write results back onto the full features GeoDataFrame
@@ -319,17 +329,19 @@ def assess_windstorm(
     features.loc[features_wind.index, "EAD_max_windstorm_current"] = ead_df["EAD_max"].values
 
     # --- 5. Exposure metric at RP100 ---
+    # Exposure is computed for ALL features (including power polygons like
+    # plant/generator/substation) — a facility is exposed to wind regardless
+    # of whether we have a damage curve for it.
     if WIND_EXPOSURE_RP in hazard_dict:
         print(f"[windstorm] Computing exposure metric at RP{WIND_EXPOSURE_RP}...")
         exposure = compute_exposure_metric(
-            features=features_wind,
+            features=features,
             hazard=hazard_dict[WIND_EXPOSURE_RP],
             reference_rp=WIND_EXPOSURE_RP,
             hazard_value_col=WIND_HAZARD_COL,
-            pga_threshold=0.0,
+            pga_threshold=24.5,  # 24.5 m/s 3-sec gust = Beaufort 10, storm-force damage onset
         )
-        features["exposure_abs_windstorm_current"] = 0.0
-        features.loc[features_wind.index, "exposure_abs_windstorm_current"] = exposure.values
+        features["exposure_abs_windstorm_current"] = exposure.values
     else:
         print(
             f"[windstorm] RP{WIND_EXPOSURE_RP} not available, skipping exposure metric."

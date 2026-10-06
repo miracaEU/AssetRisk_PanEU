@@ -511,6 +511,18 @@ def _compute_eq_rp_damage(args, common) -> tuple:
     exposed["damage_min"] = damage_min
     exposed["damage_max"] = damage_max
 
+    # --- Area decay correction for large polygons ---
+    from risk_integration import AREA_DECAY_ASSET_TYPES, _compute_area_scale_factors
+
+    if asset_type in AREA_DECAY_ASSET_TYPES:
+        scale = _compute_area_scale_factors(features, asset_type)
+        aligned = scale.reindex(exposed.index, fill_value=1.0)
+        needs_scaling = aligned < 1.0
+        if needs_scaling.any():
+            exposed["damage_mean"] = exposed["damage_mean"] * aligned
+            exposed["damage_min"] = exposed["damage_min"] * aligned
+            exposed["damage_max"] = exposed["damage_max"] * aligned
+
     return rp, exposed
 
 

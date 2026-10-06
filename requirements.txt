@@ -1,0 +1,29 @@
+# Runtime dependencies of src/ and src_tent/ (imports actually used), pinned to
+# the versions used for the ERL paper (Python 3.13). The uv lockfile (uv.lock,
+# pyproject.toml) is the reference environment; this file is for pip users.
+#   pip install -r requirements.txt
+damagescanner==1.0.1
+exactextract==0.3.0
+geopandas==1.1.2
+matplotlib==3.10.8
+netCDF4==1.7.4
+numpy==2.4.2
+openpyxl==3.1.5
+pandas==3.0.1
+pyarrow==23.0.1
+pyproj==3.7.2
+pystac==1.14.3
+pystac-client==0.9.0
+pyyaml==6.0.3
+rasterio==1.5.0
+rioxarray==0.21.0
+scipy==1.17.1
+shapely==2.1.2
+tqdm==4.67.3
+xarray==2025.11.0
+
+# Optional
+# python-docx      # Word export of Supplementary Tables (src/supplementary_tables.py)
+# cmcrameri        # Crameri colour maps; NOT installed for the paper figures, which use
+#                  # the built-in fallbacks in src/figures.py. Installing it changes colours.
+# pytest           # tests/

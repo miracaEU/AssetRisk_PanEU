@@ -249,56 +249,6 @@ def _aggregate_models(
 
 
 # ---------------------------------------------------------------------------
-# Relative change calculation
-# ---------------------------------------------------------------------------
-
-
-def _calculate_relative_changes(
-    recent_df: pd.DataFrame,
-    future_df: pd.DataFrame,
-    future_window: str,
-) -> pd.DataFrame:
-    """
-    Compute abs and rel change between recent baseline and a future window.
-    Matches original calculate_relative_change_safe logic exactly.
-    """
-    merged = pd.merge(
-        recent_df,
-        future_df,
-        on=["osm_id", "month", "month_name"],
-        suffixes=("_baseline", "_future"),
-    )
-
-    stats_to_process = ["mean"]
-    if f"avg_days_{future_window}_min" in merged.columns:
-        stats_to_process += ["min", "max"]
-
-    for stat in stats_to_process:
-        base_col = "avg_days_recent_mean"
-        fut_col = f"avg_days_{future_window}_{stat}"
-        if base_col not in merged.columns or fut_col not in merged.columns:
-            continue
-
-        abs_col = f"abs_change_recent_to_{future_window}_{stat}"
-        rel_col = f"rel_change_recent_to_{future_window}_{stat}"
-
-        merged[abs_col] = merged[fut_col] - merged[base_col]
-        merged[rel_col] = np.nan
-
-        normal = merged[base_col] > 0
-        zero_pos = (merged[base_col] == 0) & (merged[fut_col] > 0)
-        zero_zer = (merged[base_col] == 0) & (merged[fut_col] == 0)
-
-        merged.loc[normal, rel_col] = (
-            merged.loc[normal, abs_col] / merged.loc[normal, base_col]
-        )
-        merged.loc[zero_pos, rel_col] = 10.0
-        merged.loc[zero_zer, rel_col] = 0.0
-
-    return merged
-
-
-# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -348,7 +298,6 @@ def assess_wildfire(
     print(f"[wildfire] Scenarios: {list(all_files.keys())}")
     all_columns: dict[str, pd.Series] = {}
     scenario_aggregated: dict[str, dict[str, pd.DataFrame]] = {}
-    hist_recent: pd.DataFrame | None = None
 
     # --- Pass 1: exposure values ---
     for scenario, model_paths in all_files.items():
@@ -404,15 +353,12 @@ def assess_wildfire(
                 stat = col.split("_")[-1]  # mean, min, or max
                 if stat == "mean":
                     out_col = f"exposure_abs_wildfire_{suffix}"
+                elif stat in ("min", "max") and suffix != "current":
+                    out_col = f"exposure_abs_{stat}_wildfire_{suffix}"
                 else:
-                    # min/max only exist for multi-model future — skip for dashboard
                     continue
                 all_columns[out_col] = yearly[col].rename(out_col)
 
-        if scenario == "historical" and "recent" in scenario_aggregated.get(
-            "historical", {}
-        ):
-            hist_recent = scenario_aggregated["historical"]["recent"]
 
     # Pass 2: relative changes are now computed in the pipeline runner
     # (exposure_rel = exposure_abs / asset_size), so we skip the old

@@ -6,7 +6,14 @@ River flood risk assessment module.
 Takes a pre-loaded exposure GeoDataFrame and returns it enriched with:
   - EAD_river, EAD_river_min, EAD_river_max
   - EAD_river_1.5C, EAD_river_1.5C_min, EAD_river_1.5C_max  (+ 2.0C, 3.0C, 4.0C)
-  - exposure_river_100  (length / area / count at RP100)
+  - exposure_abs_river_current  (length / area / count at RP100)
+  - flood_extent_river_RP200_current, flood_extent_river_RP500_current
+    (same metric at RP200/RP500 — present-day extent only, used to
+    approximate future RP100-equivalent exposure by inverting the basin
+    RP-shift curve; see RIVER_EXPOSURE_EXTRA_RPS. Deliberately NOT prefixed
+    "exposure_abs_" — merge_outputs.py / aggregate_outputs.py generically
+    sweep that prefix and parse the remainder as {hazard}_{period}, which
+    would mis-parse "river_RP200_current" as hazard "river_RP200")
 
 Depends on:
   - risk_integration.py  (EAD integration, exposure metrics, climate adjustment)
@@ -29,6 +36,8 @@ from damagescanner.core import VectorExposure
 from constants import (
     DICT_CIS_VULNERABILITY_FLOOD,
     INFRASTRUCTURE_DAMAGE_VALUES,
+    RIVER_FUTURE_TEMP_CODES,
+    RIVER_FUTURE_TEMP_LABELS,
 )
 
 from risk_integration import (
@@ -49,11 +58,21 @@ RIVER_RETURN_PERIODS = [10, 20, 30, 40, 50, 75, 100, 200, 500]
 RIVER_HAZARD_COL = "band_data"
 RIVER_EXPOSURE_RP = 100  # reference return period for exposure metric
 
+# Extra anchor RPs for exposure — lets us later ask "what does the future
+# 1-in-100-year floodplain look like" by inverting the basin RP-shift curve
+# (RP100 -> new_RP) and interpolating between today's RP100/200/500 exposure
+# instead of just RP100's, since flooding intensification generally means
+# tomorrow's 1-in-100-year extent matches one of today's rarer (200/500yr)
+# extents, not today's RP100 extent itself. Rasters are already loaded in
+# hazard_dict for the EAD step, so this is just 2 extra cheap calls.
+RIVER_EXPOSURE_EXTRA_RPS = (200, 500)
+
 # Temperature scenarios for future river — mapped to time periods + SSP
 # 1.5°C → RCP4.5/2050 → SSP245, 2.0°C → RCP8.5/2050 → SSP585
 # 3.0°C → RCP4.5/2100 → SSP245, 4.0°C → RCP8.5/2100 → SSP585
-TEMP_CODES = ("15", "20", "30", "40")
-TEMP_LABELS = ("2050_SSP245", "2050_SSP585", "2100_SSP245", "2100_SSP585")
+# (single definition in constants.py; names kept for src_tent imports)
+TEMP_CODES = RIVER_FUTURE_TEMP_CODES
+TEMP_LABELS = RIVER_FUTURE_TEMP_LABELS
 
 
 def _worker_init():
@@ -521,6 +540,26 @@ def assess_river(
     else:
         print(f"[river] RP{RIVER_EXPOSURE_RP} not available, skipping exposure metric.")
         features["exposure_abs_river_current"] = np.nan
+
+    # --- 6b. Extra exposure anchors (RP200, RP500) ---
+    # Not used by the standard current/future EAD columns — kept for the
+    # "hold the 1% line" exposure-growth analysis (see module docstring note
+    # above RIVER_EXPOSURE_EXTRA_RPS). Cheap: hazard_dict already holds these
+    # rasters from the damage-calculation step.
+    for extra_rp in RIVER_EXPOSURE_EXTRA_RPS:
+        col = f"flood_extent_river_RP{extra_rp}_current"
+        if extra_rp in hazard_dict:
+            print(f"[river] Computing exposure metric at RP{extra_rp}...")
+            features[col] = compute_exposure_metric(
+                features=features,
+                hazard=hazard_dict[extra_rp],
+                reference_rp=extra_rp,
+                hazard_value_col=RIVER_HAZARD_COL,
+                pga_threshold=0.0,
+            ).values
+        else:
+            print(f"[river] RP{extra_rp} not available, skipping.")
+            features[col] = np.nan
 
     # --- 7. Future climate scenarios ---
     if basin_data is not None:

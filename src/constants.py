@@ -9,7 +9,7 @@ Updated to match the harmonised exposure database object_type values:
   - narrow_gauge (rail)
   - communication (telecom)
   - apron (air)
-  - harbour, pier (ports)
+  - harbour, port (ports)
   - gasometer, gas, LNG, natural_gas (gas)
   - refinery, oil, crude_oil, diesel, petroleum, fuel_oil, fuel, storage_tank (oil)
 """
@@ -122,10 +122,124 @@ WINDOW_TO_PERIOD = {
 }
 
 # ---------------------------------------------------------------------------
+# Shared pipeline settings (merge_outputs, aggregate_outputs, figures, ...)
+# ---------------------------------------------------------------------------
+
+# Hazards with a damage function (EAD) and hazards with an exposure metric
+EAD_HAZARDS = ["river", "coastal", "windstorm", "earthquake"]
+EXPOSURE_HAZARDS = ["river", "coastal", "windstorm", "earthquake",
+                    "heat", "wildfire", "landslide"]
+
+# Output period labels. For heat/wildfire "2050" = 2041-2060 and "2100" =
+# 2061-2080 (WINDOW_TO_PERIOD); for river they are warming levels
+# (RIVER_FUTURE_TEMP_LABELS); for coastal the CoCliCo 2050/2100 horizons.
+FUTURE_PERIODS = ["2050_SSP245", "2050_SSP585", "2100_SSP245", "2100_SSP585"]
+
+# The eight CI systems reported in the paper; oil and gas are computed by the
+# pipeline but excluded from all paper figures and tables.
+PAPER_SYSTEMS = ["power", "roads", "rail", "airports", "ports",
+                 "education", "healthcare", "telecom"]
+EXCLUDED_SYSTEMS = {"oil", "gas"}
+
+# Roads object_type → road_class mapping (5 analysis classes)
+ROAD_CLASS_MAP = {
+    "motorway": "motorways_and_trunks",
+    "motorway_link": "motorways_and_trunks",
+    "trunk": "motorways_and_trunks",
+    "trunk_link": "motorways_and_trunks",
+    "Motorways and Trunks": "motorways_and_trunks",
+    "primary": "primary_roads",
+    "primary_link": "primary_roads",
+    "Primary Roads": "primary_roads",
+    "secondary": "secondary_roads",
+    "secondary_link": "secondary_roads",
+    "Secondary roads": "secondary_roads",
+    "tertiary": "tertiary_roads",
+    "tertiary_link": "tertiary_roads",
+    "Tertiary roads": "tertiary_roads",
+    "residential": "other_roads",
+    "road": "other_roads",
+    "unclassified": "other_roads",
+    "track": "other_roads",
+    "service": "other_roads",
+    "Other roads": "other_roads",
+}
+
+
+def load_config() -> dict:
+    """Read config.yml from the repository root (one level above src/)."""
+    from pathlib import Path
+
+    import yaml
+
+    config_path = Path(__file__).parent.parent / "config.yml"
+    try:
+        with open(config_path) as f:
+            return yaml.safe_load(f)
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"config.yml not found at {config_path}.\n"
+            "Copy config.template.yml to config.yml and fill in your paths."
+        )
+
+# ---------------------------------------------------------------------------
 # Maximum damage values per asset type
 # Format: {object_type: [min, mean, max]}  (€/m for lines, €/m² for polygons,
 #                                           €/unit for points)
+#
+# NOTE: storage_tank, gasometer, and petroleum_well values were converted
+# from per-unit to per-m² by dividing by the median polygon area observed
+# across the European exposure database (storage_tank: 193 m², gasometer:
+# 54 m², petroleum_well: 8682 m²).  Point petroleum wells must be assigned
+# a default pad area (DEFAULT_WELL_PAD_AREA_M2) before damage calculation
+# so the per-m² rate produces a realistic total.
 # ---------------------------------------------------------------------------
+
+# Default well pad area (m²) assigned to point petroleum_well features.
+# Based on European conventional well site sizes (literature range 1000–20000 m²,
+# conservative estimate for a typical single-well pad).
+DEFAULT_WELL_PAD_AREA_M2 = 3000
+
+
+def assign_default_well_pad_area(features, asset_type: str):
+    """
+    For oil assets: convert point petroleum_well features to polygons
+    by buffering with DEFAULT_WELL_PAD_AREA_M2, so the per-m² maxdam
+    values produce realistic damage totals.
+
+    Modifies features in place and returns them.
+    Should be called after loading features, before damage assessment.
+    """
+    if asset_type != "oil":
+        return features
+    if "object_type" not in features.columns:
+        return features
+
+    is_point_well = (
+        (features["object_type"] == "petroleum_well")
+        & features.geometry.geom_type.isin(["Point", "MultiPoint"])
+    )
+
+    if not is_point_well.any():
+        return features
+
+    import numpy as np
+
+    # Buffer points into circles with area = DEFAULT_WELL_PAD_AREA_M2
+    # area = π r² → r = √(area / π)
+    radius = np.sqrt(DEFAULT_WELL_PAD_AREA_M2 / np.pi)
+
+    # Buffer in the current CRS (should be metric, e.g. EPSG:3035)
+    features = features.copy()
+    features.loc[is_point_well, "geometry"] = (
+        features.loc[is_point_well].geometry.buffer(radius)
+    )
+
+    n = is_point_well.sum()
+    print(f"[constants] Buffered {n} point petroleum_well features "
+          f"to {DEFAULT_WELL_PAD_AREA_M2} m² polygons (r={radius:.1f}m)")
+
+    return features
 
 INFRASTRUCTURE_DAMAGE_VALUES = {
     # ----- Roads -----
@@ -232,34 +346,33 @@ INFRASTRUCTURE_DAMAGE_VALUES = {
     # ----- Gas -----
     "gas": {
         "pipeline": [71, 102, 103],
-        "storage_tank": [30310, 808265, 1515497],
-        "gasometer": [30310, 808265, 1515497],
-        "substation": [1299886, 19047345, 63491148],
-        "gas": [1299886, 19047345, 63491148],
-        "LNG": [1299886, 19047345, 63491148],
-        "natural_gas": [1299886, 19047345, 63491148],
+        "storage_tank": [157, 4181, 7840],   #[30310, 808265, 1515497],
+        "gasometer": [558, 14885, 27910], #[30310, 808265, 1515497],
+        "substation": [1299, 1904, 6349], #[1299886, 19047345, 63491148],
+        "gas": [1299, 1904, 6349], #[1299886, 19047345, 63491148],
+        "LNG": [1299, 1904, 6349], #[1299886, 19047345, 63491148],
+        "natural_gas": [1299, 1904, 6349], #[1299886, 19047345, 63491148],
     },
     # ----- Oil -----
     "oil": {
         "pipeline": [71, 102, 103],
-        "petroleum_well": [303100, 404133, 505166],
-        "oil_refinery": [6499430, 155817332, 1111095098],
-        "storage_tank": [30310, 808265, 1515497],
-        "substation": [1299886, 19047345, 63491148],
-        "refinery": [6499430, 155817332, 1111095098],
-        "oil": [6499430, 155817332, 1111095098],
-        "crude_oil": [6499430, 155817332, 1111095098],
-        "diesel": [6499430, 155817332, 1111095098],
-        "petroleum": [6499430, 155817332, 1111095098],
-        "fuel_oil": [6499430, 155817332, 1111095098],
-        "fuel": [6499430, 155817332, 1111095098],
+        "petroleum_well": [35, 47, 58],   #[303100, 404133, 505166],
+        "oil_refinery": [1299, 1904, 6349], #[6499430, 155817332, 1111095098],
+        "storage_tank":  [157, 4181, 7840], #[30310, 808265, 1515497],
+        "substation": [1299, 1904, 6349], #[1299886, 19047345, 63491148],
+        "refinery": [1299, 1904, 6349], #[6499430, 155817332, 1111095098],
+        "oil": [1299, 1904, 6349], #[6499430, 155817332, 1111095098],
+        "crude_oil": [1299, 1904, 6349], #[6499430, 155817332, 1111095098],
+        "diesel":[1299, 1904, 6349], # [6499430, 155817332, 1111095098],
+        "petroleum": [1299, 1904, 6349], #[6499430, 155817332, 1111095098],
+        "fuel_oil":[1299, 1904, 6349], # [6499430, 155817332, 1111095098],
+        "fuel": [1299, 1904, 6349], #[6499430, 155817332, 1111095098],
     },
     # ----- Ports -----
     "ports": {
         "port": [113, 135, 165],
         "terminal": [113, 165, 4271],
         "harbour": [113, 135, 165],
-        "pier": [113, 135, 165],
     },
 }
 
@@ -386,9 +499,14 @@ DICT_CIS_VULNERABILITY_FLOOD = {
         "port": ["F9.1"],
         "terminal": ["F9.1"],
         "harbour": ["F9.1"],
-        "pier": ["F9.1"],
     },
 }
+
+# ---------------------------------------------------------------------------
+# Wind design standard (IEC 60826 lower bound — RP50 for all asset types)
+# ---------------------------------------------------------------------------
+
+WIND_PROTECTION_STANDARD_RP = 50  # years
 
 # ---------------------------------------------------------------------------
 # Wind vulnerability curve IDs per asset type
@@ -434,8 +552,10 @@ DICT_CIS_VULNERABILITY_WIND = {
         "Tertiary roads": ["W7.2"],
     },
     "rail": {
-        "rail": ["W7.2"],
-        "narrow_gauge": ["W7.2"],
+        # W3.9/W3.6/W3.12 = power tower damage-factor curves at 150/120/180 km/h design speed.
+        # Proxy for catenary mast damage per km of track (no dedicated rail catenary curve exists).
+        "rail": ["W3.9", "W3.6", "W3.12"],
+        "narrow_gauge": ["W3.9", "W3.6", "W3.12"],
     },
     "air": {
         "aerodrome": ["W7.2"],
@@ -557,7 +677,6 @@ DICT_CIS_VULNERABILITY_WIND = {
         "port": ["W7.2"],
         "terminal": ["W21.13", "W21.14"],
         "harbour": ["W7.2"],
-        "pier": ["W7.2"],
     },
 }
 
@@ -771,6 +890,78 @@ DICT_CIS_VULNERABILITY_EARTHQUAKE = {
         "port": ["E9.2", "E9.3", "E9.4"],
         "terminal": ["E9.2", "E9.3", "E9.4"],
         "harbour": ["E9.2", "E9.3", "E9.4"],
-        "pier": ["E9.2", "E9.3", "E9.4"],
     },
+}
+
+# TENT asset type aliases — map TENT names to existing vulnerability dict keys
+INFRASTRUCTURE_DAMAGE_VALUES["airports"] = INFRASTRUCTURE_DAMAGE_VALUES["air"]
+DICT_CIS_VULNERABILITY_FLOOD["airports"] = DICT_CIS_VULNERABILITY_FLOOD["air"]
+DICT_CIS_VULNERABILITY_WIND["airports"] = DICT_CIS_VULNERABILITY_WIND["air"]
+DICT_CIS_VULNERABILITY_EARTHQUAKE["airports"] = DICT_CIS_VULNERABILITY_EARTHQUAKE["air"]
+
+# OSM energy network — lines (overhead/underground) and buses (substations)
+_ENERGY_LINE_TYPES = ("line", "cable")
+_ENERGY_BUS_TYPES = ("substation",)
+
+INFRASTRUCTURE_DAMAGE_VALUES["energy_lines"] = {
+    k: v for k, v in INFRASTRUCTURE_DAMAGE_VALUES["power"].items()
+    if k in _ENERGY_LINE_TYPES
+}
+INFRASTRUCTURE_DAMAGE_VALUES["energy_buses"] = {
+    k: v for k, v in INFRASTRUCTURE_DAMAGE_VALUES["power"].items()
+    if k in _ENERGY_BUS_TYPES
+}
+DICT_CIS_VULNERABILITY_FLOOD["energy_lines"] = {
+    k: v for k, v in DICT_CIS_VULNERABILITY_FLOOD["power"].items()
+    if k in _ENERGY_LINE_TYPES
+}
+DICT_CIS_VULNERABILITY_FLOOD["energy_buses"] = {
+    k: v for k, v in DICT_CIS_VULNERABILITY_FLOOD["power"].items()
+    if k in _ENERGY_BUS_TYPES
+}
+DICT_CIS_VULNERABILITY_WIND["energy_lines"] = {
+    k: v for k, v in DICT_CIS_VULNERABILITY_WIND["power"].items()
+    if k in _ENERGY_LINE_TYPES
+}
+DICT_CIS_VULNERABILITY_WIND["energy_buses"] = {}  # substations skipped in wind wrapper
+DICT_CIS_VULNERABILITY_EARTHQUAKE["energy_lines"] = {
+    k: v for k, v in DICT_CIS_VULNERABILITY_EARTHQUAKE["power"].items()
+    if k in _ENERGY_LINE_TYPES
+}
+DICT_CIS_VULNERABILITY_EARTHQUAKE["energy_buses"] = {
+    k: v for k, v in DICT_CIS_VULNERABILITY_EARTHQUAKE["power"].items()
+    if k in _ENERGY_BUS_TYPES
+}
+
+# ---------------------------------------------------------------------------
+# Port TENT damage values — used with port-specific curves (curves_flooding.xlsx,
+# curves_TC.xlsx, curves_earthquake.xlsx). Values in €/m².
+# land_use column normalized to these keys (industry→Industry, refinery→Refinery).
+# ---------------------------------------------------------------------------
+
+PORT_TENT_MAXDAM = {
+    # land_use:         cost (single value, no uncertainty range)
+    "General Cargo":    [1063,   1063,   1063],
+    "Container":        [ 835,    835,    835],
+    "RoRo":             [ 760,    760,    760],
+    "Liquid":           [ 988,    988,    988],
+    "Dry Bulk":         [ 531,    531,    531],
+    "Raw":              [ 531,    531,    531],
+    "Refinery":         [1822,   1822,   1822],
+    "Industry":         [ 400,    400,    400],
+    "Warehouse":        [ 600,    600,    600],
+    "Crane":            [9000000, 9000000, 9000000],
+    "Storage":          [   0,      0,      0],
+    "Other":            [   0,      0,      0],
+    # IWW node values (used when IWW nodes are integrated)
+    "Road":             [3000000,  3000000,  3000000],
+    "Rail":             [17000000, 17000000, 17000000],
+    "Electricity":      [1100000,  1100000,  1100000],
+    "Power":            [300000000, 300000000, 300000000],
+}
+
+# land_use normalization map (port parquet → curve column names)
+PORT_LAND_USE_NORMALIZE = {
+    "industry": "Industry",
+    "refinery": "Refinery",
 }

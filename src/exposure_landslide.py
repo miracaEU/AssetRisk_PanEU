@@ -66,6 +66,7 @@ def load_landslide(
 def _compute_susceptibility_stats(
     exposed: gpd.GeoDataFrame,
     cell_area_m2: float,
+    min_class: int = 4,
 ) -> pd.DataFrame:
     """
     Compute min, avg, max susceptibility and exposure metrics from VectorExposure output.
@@ -75,12 +76,25 @@ def _compute_susceptibility_stats(
     Args:
         exposed:       VectorExposure output with 'values' and 'coverage' columns
         cell_area_m2:  Raster cell area in m² (for polygon coverage scaling)
+        min_class:     Minimum ELSUS susceptibility class to count as exposed (default 4 = High).
+                       Classes: 1=Very Low, 2=Low, 3=Medium, 4=High, 5=Very High.
 
     Returns:
         DataFrame with columns: min_susceptibility, avg_susceptibility,
                                 max_susceptibility, total_exposure, max_cat_exposure
     """
     is_poly = exposed.geometry.geom_type.isin(["Polygon", "MultiPolygon"])
+    is_line = exposed.geometry.geom_type.isin(["LineString", "MultiLineString"])
+
+    # True geometry size per feature (length for lines, area for polygons,
+    # 1.0 for points) — total_exposure/max_cat_exposure can never physically
+    # exceed this. Caps a DamageScanner gridded-overlay artefact where features
+    # whose bbox spans more than one internal 50km raster tile get matching
+    # raster cells double-counted across tiles (_remove_duplicates in
+    # damagescanner/vector.py concatenates instead of dedups on tile overlap).
+    true_size = pd.Series(1.0, index=exposed.index)
+    true_size[is_line] = exposed.geometry[is_line].length
+    true_size[is_poly] = exposed.geometry[is_poly].area
 
     records = []
     for idx, row in exposed.iterrows():
@@ -110,7 +124,9 @@ def _compute_susceptibility_stats(
         else:
             c_scaled = c
 
-        total = float(c_scaled.sum())
+        # Only count cells at or above the minimum susceptibility class
+        above_thresh = v >= min_class
+        total = float(c_scaled[above_thresh].sum())
         max_v = float(v.max())
         min_v = float(v.min())
         avg_v = (
@@ -119,6 +135,10 @@ def _compute_susceptibility_stats(
             else float(v.mean())
         )
         max_cat = float(c_scaled[v == max_v].sum())
+
+        cap = float(true_size.loc[idx])
+        total = min(total, cap)
+        max_cat = min(max_cat, cap)
 
         records.append(
             {
@@ -189,9 +209,9 @@ def assess_landslide(
         disable_progress=False,
     )
 
-    # Compute statistics
-    print("[landslide] Computing susceptibility statistics...")
-    stats = _compute_susceptibility_stats(exposed, cell_area_m2)
+    # Compute statistics — only classes 4+ (High, Very High) count as exposed
+    print("[landslide] Computing susceptibility statistics (min_class=4)...")
+    stats = _compute_susceptibility_stats(exposed, cell_area_m2, min_class=4)
 
     # Merge back to original features (preserving original CRS)
     features = features.copy()

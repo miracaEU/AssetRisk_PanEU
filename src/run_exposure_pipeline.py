@@ -33,6 +33,7 @@ from exposure_utils import (
     load_config,
     load_infrastructure,
     to_iso2,
+    to_iso3,
 )
 from exposure_landslide import assess_landslide
 from exposure_heat import assess_heat
@@ -112,6 +113,7 @@ def run_single(
     config: dict,
     hazards: list[str],
     n_outer_workers: int = 1,
+    skip_existing: bool = True,
 ) -> tuple[str, str, str]:
     """
     Run exposure assessment for one country × asset_type combination.
@@ -120,6 +122,7 @@ def run_single(
         (country_iso3, asset_type, status_message)
     """
     t0 = time.time()
+    country_iso3 = to_iso3(country_iso3)  # normalise ISO2 input → ISO3
     iso2 = to_iso2(country_iso3)
     tag = f"{country_iso3}/{asset_type}"
 
@@ -131,7 +134,7 @@ def run_single(
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{country_iso3}_{system}_exposure.parquet"
 
-    if out_path.exists():
+    if skip_existing and out_path.exists():
         print(f"[{tag}] Skipping — output already exists: {out_path.name}")
         return country_iso3, asset_type, "skipped"
 
@@ -142,6 +145,9 @@ def run_single(
         return country_iso3, asset_type, "no_features"
 
     print(f"[{tag}] Loaded {len(features)} features")
+
+    from constants import assign_default_well_pad_area
+    features = assign_default_well_pad_area(features, asset_type)
 
     # Ensure osm_id column exists
     if "osm_id" not in features.columns:
@@ -230,6 +236,59 @@ def run_single(
     features["osm_id"] = features["_osm_id_orig"]
     features = features.drop(columns=["feature_id", "_osm_id_orig"], errors="ignore")
 
+    # Patch mode: if output exists and only a hazard subset was run, load the
+    # existing file and update only the affected columns rather than rebuilding
+    # from scratch (which would drop hazards that weren't in this run).
+    partial_run = set(hazards) != set(DEFAULT_HAZARDS)
+    if partial_run and out_path.exists():
+        print(f"[{tag}] Patch mode — updating {hazards} columns in existing parquet")
+        existing = gpd.read_parquet(out_path)
+
+        # Drop old abs + rel columns for the hazards being re-run
+        drop_prefixes = tuple(
+            f"exposure_{kind}_{h}"
+            for h in hazards
+            for kind in ("abs", "rel")
+        ) + tuple(
+            f"exposure_{kind}_min_{h}"
+            for h in hazards
+            for kind in ("abs", "rel")
+        ) + tuple(
+            f"exposure_{kind}_max_{h}"
+            for h in hazards
+            for kind in ("abs", "rel")
+        )
+        drop_cols = [c for c in existing.columns if c.startswith(drop_prefixes)]
+        existing = existing.drop(columns=drop_cols, errors="ignore")
+
+        # Build join index matching the existing parquet row order
+        if "LAU" in existing.columns:
+            join_index = existing["osm_id"].astype(str) + "__" + existing["LAU"].astype(str)
+        else:
+            join_index = existing["osm_id"].astype(str)
+        existing.index = join_index
+
+        for col_name, series in all_columns.items():
+            existing[col_name] = series.reindex(existing.index).values
+
+        # Recompute rel for newly added abs columns
+        asset_size = existing["asset_size"] if "asset_size" in existing.columns else pd.Series(1.0, index=existing.index)
+        for col in list(all_columns.keys()):
+            if col.startswith("exposure_abs_"):
+                rel_col = col.replace("exposure_abs_", "exposure_rel_")
+                existing[rel_col] = 0.0
+                nonzero = asset_size > 0
+                existing.loc[nonzero, rel_col] = (
+                    existing.loc[nonzero, col] / asset_size[nonzero]
+                )
+
+        output = existing.reset_index(drop=True)
+        output.to_parquet(out_path)
+        elapsed = time.time() - t0
+        print(f"[{tag}] Patch done in {elapsed:.1f}s — {len(all_columns)} cols updated → {out_path.name}")
+        return country_iso3, asset_type, "ok"
+
+    # Full rebuild (all hazards or no existing file)
     # Base: geometry + metadata from features, indexed by feature_id for joining
     meta_cols = ["osm_id", "geometry"]
     for col in ["object_type", "LAU", "NUTS2"]:
@@ -289,8 +348,8 @@ def run_single(
 
 
 def _run_single_unpacked(args: tuple) -> tuple[str, str, str]:
-    country, asset, config, hazards, n_outer = args
-    return run_single(country, asset, config, hazards, n_outer)
+    country, asset, config, hazards, n_outer, skip_existing = args
+    return run_single(country, asset, config, hazards, n_outer, skip_existing)
 
 
 # ---------------------------------------------------------------------------
@@ -304,20 +363,22 @@ def run_pipeline(
     hazards: list[str] | None = None,
     config_path: str = "config.yml",
     workers: int | None = None,
+    skip_existing: bool = True,
 ) -> None:
     """
     Run the full exposure pipeline.
 
     Args:
-        countries:    List of ISO3 codes (default: all European)
-        assets:       List of asset types (default: all)
-        hazards:      List of hazard types: heat, wildfire, landslide (default: all)
-        config_path:  Path to YAML config file
-        workers:      Number of parallel country×asset workers (None = sequential)
+        countries:      List of ISO3 codes (default: all European)
+        assets:         List of asset types (default: all)
+        hazards:        List of hazard types: heat, wildfire, landslide (default: all)
+        config_path:    Path to YAML config file
+        workers:        Number of parallel country×asset workers (None = sequential)
+        skip_existing:  Skip combinations where output parquet already exists (default True)
     """
     t_start = time.time()
 
-    config = load_config(config_path)
+    config = load_config()
 
     countries = [c.upper() for c in (countries or DEFAULT_COUNTRIES)]
     assets = assets or DEFAULT_ASSETS
@@ -341,14 +402,15 @@ def run_pipeline(
         # Sequential — full inner parallelism available per hazard module
         for country, asset in combos:
             c, a, status = run_single(
-                country, asset, config, hazards, n_outer_workers=1
+                country, asset, config, hazards, n_outer_workers=1,
+                skip_existing=skip_existing,
             )
             results[(c, a)] = status
     else:
         # Outer parallelism across country×asset combinations
         # Inner parallelism disabled to avoid memory exhaustion
         task_args = [
-            (country, asset, config, hazards, effective_workers)
+            (country, asset, config, hazards, effective_workers, skip_existing)
             for country, asset in combos
         ]
         with ProcessPoolExecutor(max_workers=effective_workers) as executor:
@@ -427,6 +489,19 @@ def main() -> None:
             "N>1 = N outer workers, inner parallelism disabled."
         ),
     )
+    parser.add_argument(
+        "--skip-existing",
+        dest="skip_existing",
+        action="store_true",
+        default=True,
+        help="Skip combinations where output parquet already exists (default)",
+    )
+    parser.add_argument(
+        "--no-skip-existing",
+        dest="skip_existing",
+        action="store_false",
+        help="Overwrite existing output parquets",
+    )
 
     args = parser.parse_args()
 
@@ -436,6 +511,7 @@ def main() -> None:
         hazards=args.hazards,
         config_path=args.config,
         workers=args.workers,
+        skip_existing=args.skip_existing,
     )
 
 
