@@ -60,8 +60,10 @@ except ImportError:
 
 COASTAL_STAC_URL = "https://storage.googleapis.com/coclico-data-public/coclico/coclico-stac/catalog.json"
 COASTAL_COLLECTION = "cfhp_all"
-COASTAL_RETURN_PERIODS = [10, 25, 50, 100, 250, 500, 1000]
+# Return periods are taken from the CoCliCo STAC items themselves (1, 100, 1000).
 COASTAL_EXPOSURE_RP = 100
+COASTAL_PROTECTION_SHEET = "COASTPROS-EU"
+COASTAL_PROTECTION_RP_COL = "MODELLED RETURN PERIOD"
 
 # (time_horizon, climate_scenario) → output column label prefix
 # The full columns will be: {label}_mid, {label}_min, {label}_max
@@ -76,6 +78,123 @@ COASTAL_SCENARIOS = {
 # Unique key for aggregating damage — osm_id alone is insufficient
 # because the same OSM way can cross LAU boundaries
 _AGG_KEY = ["osm_id", "LAU"]
+
+
+# ---------------------------------------------------------------------------
+# Protection standards
+# ---------------------------------------------------------------------------
+
+
+def load_coastal_protection_standards(
+    features: gpd.GeoDataFrame,
+    coastpros_path: Union[str, Path],
+    nuts2_path: Union[str, Path],
+) -> pd.Series:
+    """
+    Assign coastal flood protection standard (design RP) to each asset via
+    NUTS2 spatial join against COASTPROS-EU.
+
+    Uses modelled RP values (mod_rp column). NUTS2 regions with no modelled
+    value fall back to the country-level mean; countries with no data at all
+    get 0 (unprotected).
+
+    Args:
+        features:       Exposure GeoDataFrame (any CRS)
+        coastpros_path: Path to COASTPROS-EU.xlsx
+        nuts2_path:     Path to NUTS2 geometry file (parquet or GeoJSON, EPSG:3035)
+
+    Returns:
+        Series mapping feature index → protection standard RP (0 if unknown)
+    """
+    print("[coastal] Loading coastal protection standards from COASTPROS-EU...")
+
+    # --- 1. Read and parse COASTPROS-EU ---
+    df = pd.read_excel(coastpros_path, sheet_name=COASTAL_PROTECTION_SHEET)
+
+    # Normalise column names: strip whitespace
+    df.columns = df.columns.str.strip()
+
+    nuts2_id_col = "NUTS2 ID"
+    cntr_col = "CNTR_CODE"
+    rp_col = COASTAL_PROTECTION_RP_COL
+
+    # Parse mod_rp to numeric (NA, empty, text → NaN)
+    df[rp_col] = pd.to_numeric(df[rp_col], errors="coerce")
+
+    # Country-level fallback: mean of available modelled RPs per country
+    country_mean = (
+        df.dropna(subset=[rp_col])
+        .groupby(cntr_col)[rp_col]
+        .mean()
+    )
+
+    # Fill NaN with country mean, then 0 for countries with no data at all
+    def _fill(row):
+        if pd.notna(row[rp_col]):
+            return row[rp_col]
+        return country_mean.get(row[cntr_col], 0.0)
+
+    df["_rp_filled"] = df.apply(_fill, axis=1)
+    nuts2_rp = df.set_index(nuts2_id_col)["_rp_filled"].to_dict()
+
+    n_nuts2 = df[nuts2_id_col].notna().sum()
+    n_with_data = df[rp_col].notna().sum()
+    print(
+        f"  [coastal] COASTPROS: {n_nuts2} NUTS2 regions, "
+        f"{n_with_data} with modelled RP, "
+        f"{n_nuts2 - n_with_data} filled from country mean"
+    )
+
+    # --- 2. Load NUTS2 geometries ---
+    path = Path(nuts2_path)
+    if path.suffix == ".parquet":
+        nuts2_gdf = gpd.read_parquet(nuts2_path)
+    else:
+        nuts2_gdf = gpd.read_file(nuts2_path)
+
+    nuts2_gdf = nuts2_gdf[nuts2_gdf["LEVL_CODE"] == 2].copy()
+    nuts2_gdf = nuts2_gdf.to_crs(3035)
+
+    # Primary lookup: NUTS_ID → RP; fallback: CNTR_CODE → country mean → 0
+    nuts2_gdf["_rp"] = nuts2_gdf.apply(
+        lambda r: nuts2_rp.get(r["NUTS_ID"], country_mean.get(r["CNTR_CODE"], 0.0)),
+        axis=1,
+    )
+
+    # --- 3. Spatial join: feature centroids → NUTS2 ---
+    # Two-step: within first, then nearest fallback for coastal/offshore features
+    # whose centroids fall outside land polygons.
+    features_3035 = features.to_crs(3035)
+    centroids = gpd.GeoDataFrame(
+        geometry=features_3035.geometry.centroid,
+        index=features.index,
+        crs=3035,
+    )
+
+    nuts2_cols = nuts2_gdf[["geometry", "_rp"]].copy()
+
+    joined = gpd.sjoin(centroids, nuts2_cols, how="left", predicate="within")
+    joined = joined[~joined.index.duplicated(keep="first")]
+
+    # Fallback: features not matched (centroid outside all NUTS2) → nearest NUTS2
+    unmatched_idx = joined.index[joined["_rp"].isna()]
+    if len(unmatched_idx) > 0:
+        nearest = gpd.sjoin_nearest(
+            centroids.loc[unmatched_idx],
+            nuts2_cols,
+            how="left",
+        )
+        nearest = nearest[~nearest.index.duplicated(keep="first")]
+        joined.loc[unmatched_idx, "_rp"] = nearest["_rp"].values
+
+    protection = joined["_rp"].reindex(features.index).fillna(0.0).clip(lower=0)
+
+    print(
+        f"  [coastal] Protection standards assigned. "
+        f"Mean: {protection.mean():.0f} yr, Max: {protection.max():.0f} yr, "
+        f"Unprotected (0): {(protection == 0).sum()}"
+    )
+    return protection
 
 
 # ---------------------------------------------------------------------------
@@ -136,9 +255,12 @@ def stream_coastal_tiles(
         time_horizon:     '2010', '2050', or '2100'
         climate_scenario: 'None', 'SSP245', or 'SSP585'
     """
+    print(f"[coastal] Connecting to STAC: {stac_catalog_url}")
     try:
         catalog = pystac_client.Client.open(stac_catalog_url)
         collection = catalog.get_child(id=collection_id)
+        items = list(collection.get_items())
+        print(f"[coastal] Connected OK — {len(items)} items in collection '{collection_id}'")
     except Exception as e:
         print(f"[coastal] Cannot connect to STAC: {e}")
         return
@@ -210,6 +332,7 @@ def _damage_from_tile(
     maxdam: pd.DataFrame,
     exclusions: dict,
     feature_bounds_3035: tuple,
+    asset_type: str = None,
 ) -> Optional[pd.DataFrame]:
     """
     Extract damage from one tile. Returns a small DataFrame with columns:
@@ -231,7 +354,7 @@ def _damage_from_tile(
             hazard=tile_clipped,
             curve_path=damage_curves,
             maxdam=maxdam,
-            asset_type=None,
+            asset_type=asset_type,
             multi_curves=multi_curves,
             hazard_value_col=RIVER_HAZARD_COL,
         )
@@ -278,6 +401,8 @@ def _run_coastal_scenario(
     stac_catalog_url: str,
     col_label: str,
     compute_exposure: bool = False,
+    asset_type: str = None,
+    protection_standards: Optional[pd.Series] = None,
 ) -> tuple[gpd.GeoDataFrame, Optional[pd.Series]]:
     """
     Run coastal assessment for one (time_horizon, climate_scenario) pair.
@@ -297,8 +422,12 @@ def _run_coastal_scenario(
     rp_damage: dict[int, list[pd.DataFrame]] = {}
 
     # Build (osm_id, LAU) → index lookup once — used for exposure accumulation
+    def _norm_key(v):
+        return None if (v is None or (isinstance(v, float) and np.isnan(v))) else v
+
     key_to_idx = {
-        (row.get("osm_id"), row.get("LAU")): idx for idx, row in features.iterrows()
+        (_norm_key(row.get("osm_id")), _norm_key(row.get("LAU"))): idx
+        for idx, row in features.iterrows()
     }
     exposure_accumulator: dict = {}  # (osm_id, LAU) → running sum across tiles
 
@@ -325,7 +454,7 @@ def _run_coastal_scenario(
                 for idx, val in exp.items():
                     if val > 0:
                         row = features.loc[idx]
-                        key = (row.get("osm_id"), row.get("LAU"))
+                        key = (_norm_key(row.get("osm_id")), _norm_key(row.get("LAU")))
                         exposure_accumulator[key] = (
                             exposure_accumulator.get(key, 0.0) + val
                         )
@@ -340,6 +469,7 @@ def _run_coastal_scenario(
             maxdam=maxdam,
             exclusions=exclusions,
             feature_bounds_3035=feature_bounds_3035,
+            asset_type=asset_type,
         )
         # tile is deleted by the generator after yield — dmg is just numbers
         if dmg is not None and len(dmg) > 0:
@@ -361,6 +491,20 @@ def _run_coastal_scenario(
             }
         ).reindex(features.index, fill_value=0.0)
 
+        # Cap at the feature's true geometry size — a feature exposed in
+        # >1 overlapping STAC tile gets compute_exposure_metric's FULL
+        # length/area/count summed once per tile, which can exceed the
+        # feature's actual size. Sum is kept (legitimate for features that
+        # genuinely intersect adjacent tiles), capping just removes the
+        # double-count overshoot.
+        geom_types = features.geometry.geom_type
+        true_size = pd.Series(1.0, index=features.index)
+        is_line = geom_types.isin(["LineString", "MultiLineString"])
+        is_poly = geom_types.isin(["Polygon", "MultiPolygon"])
+        true_size[is_line] = features.geometry[is_line].length
+        true_size[is_poly] = features.geometry[is_poly].area
+        exposure_series = exposure_series.clip(upper=true_size)
+
     if not rp_damage:
         features = features.copy()
         col_min = col_label.replace("EAD_mid_", "EAD_min_")
@@ -368,7 +512,7 @@ def _run_coastal_scenario(
         features[col_label] = 0.0
         features[col_min] = 0.0
         features[col_max] = 0.0
-        return features, exposure_series
+        return features, exposure_series, {}
 
     # --- Aggregate tile damages per RP by (osm_id, LAU) ---
     # Same osm_id can appear in multiple tiles (it crosses tile boundaries)
@@ -388,8 +532,11 @@ def _run_coastal_scenario(
         )
 
         # Map back to original feature index
+        def _norm(v):
+            return None if (v is None or (isinstance(v, float) and np.isnan(v))) else v
+
         agg["_idx"] = agg.apply(
-            lambda r: key_to_idx.get((r["osm_id"], r["LAU"])), axis=1
+            lambda r: key_to_idx.get((_norm(r["osm_id"]), _norm(r["LAU"]))), axis=1
         )
         agg = agg.dropna(subset=["_idx"])
         agg["_idx"] = agg["_idx"].astype(int)
@@ -406,7 +553,7 @@ def _run_coastal_scenario(
     ead_df = collect_ead_per_asset(
         rp_results=rp_results,
         features=features,
-        protection_standards=None,
+        protection_standards=protection_standards,
     )
 
     features = features.copy()
@@ -417,7 +564,7 @@ def _run_coastal_scenario(
     features[col_max] = ead_df["EAD_max"].values
 
     print(f"  [coastal] Total {col_label}: {features[col_label].sum():.3e}")
-    return features, exposure_series
+    return features, exposure_series, rp_results
 
 
 # ---------------------------------------------------------------------------
@@ -432,6 +579,10 @@ def assess_coastal(
     stac_catalog_url: str = COASTAL_STAC_URL,
     object_curve_exclusions: Optional[dict] = None,
     scenarios: Optional[dict] = None,
+    return_rp_results: bool = False,
+    pre_loaded_curves: Optional[tuple] = None,
+    coastpros_path: Optional[Union[str, Path]] = None,
+    nuts2_path: Optional[Union[str, Path]] = None,
 ) -> gpd.GeoDataFrame:
     """
     Assess coastal flood risk for ALL scenarios in one pass.
@@ -467,20 +618,31 @@ def assess_coastal(
         features = features.copy()
         features["LAU"] = np.nan
 
-    # Vulnerability curves — loaded once, shared across all scenarios
-    damage_curves, multi_curves, maxdam_mean, _, _ = prepare_flood_curves(
-        asset_type, vulnerability_path
-    )
+    # Vulnerability curves — use pre-loaded (e.g. port-specific) or load from Excel
+    if pre_loaded_curves is not None:
+        damage_curves, multi_curves, maxdam_mean = pre_loaded_curves
+    else:
+        damage_curves, multi_curves, maxdam_mean, _, _ = prepare_flood_curves(
+            asset_type, vulnerability_path
+        )
 
     bounds_3035 = tuple(features.total_bounds)  # (minx, miny, maxx, maxy)
     exclusions = object_curve_exclusions or {}
 
-    # --- Run each scenario ---
-    for (time_horizon, climate_scenario), col_label in active_scenarios.items():
-        is_baseline = time_horizon == "2010" and climate_scenario == "None"
+    # --- Protection standards (optional) ---
+    protection_standards = None
+    if coastpros_path is not None and nuts2_path is not None:
+        protection_standards = load_coastal_protection_standards(
+            features, coastpros_path, nuts2_path
+        )
 
+    # --- Run each scenario ---
+    # all_rp_results: scenario_key → rp_results dict (for TENT per-RP columns)
+    # scenario_key = "current" for baseline, "2050_SSP245" etc. for future
+    all_rp_results: dict[str, dict] = {}
+    for (time_horizon, climate_scenario), col_label in active_scenarios.items():
         # Compute exposure for all scenarios (not just baseline)
-        features, exposure = _run_coastal_scenario(
+        features, exposure, rp_results_scenario = _run_coastal_scenario(
             features=features,
             damage_curves=damage_curves,
             multi_curves=multi_curves,
@@ -492,15 +654,14 @@ def assess_coastal(
             stac_catalog_url=stac_catalog_url,
             col_label=col_label,
             compute_exposure=True,
+            asset_type=asset_type,
+            protection_standards=protection_standards,
         )
 
-        # Derive exposure column name from scenario
-        if is_baseline:
-            exp_col = "exposure_abs_coastal_current"
-        else:
-            # e.g. "EAD_mid_coastal_2050_SSP245" → "exposure_abs_coastal_2050_SSP245"
-            suffix = col_label.replace("EAD_mid_coastal_", "")
-            exp_col = f"exposure_abs_coastal_{suffix}"
+        # Derive exposure column name and scenario key from col_label
+        suffix = col_label.replace("EAD_mid_coastal_", "")  # "current", "2050_SSP245", ...
+        exp_col = f"exposure_abs_coastal_{suffix}"
+        all_rp_results[suffix] = rp_results_scenario
 
         if exposure is not None:
             features[exp_col] = exposure.reindex(features.index).values
@@ -515,4 +676,8 @@ def assess_coastal(
 
     elapsed = time.time() - t0
     print(f"\n[coastal] All scenarios completed in {elapsed / 60:.1f} min")
+    if return_rp_results:
+        # Return dict of {scenario_key: rp_results} so TENT wrapper can attach
+        # per-RP vuln_ratio columns for all scenarios, not just baseline.
+        return features, all_rp_results
     return features

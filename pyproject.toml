@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "s3fs",
     "damagescanner",
     "exactextract>=0.3.0",
     "geopandas>=1.1.2",
@@ -26,10 +27,3 @@ dependencies = [
     "xlrd>=2.0.2",
 ]
 
-[tool.uv.sources]
-damagescanner = { path = "../DamageScanner", editable = true }
-
-[dependency-groups]
-dev = [
-    "ruff>=0.15.6",
-]

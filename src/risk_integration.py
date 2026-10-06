@@ -26,6 +26,71 @@ from damagescanner.core import VectorScanner, VectorExposure
 
 
 # ---------------------------------------------------------------------------
+# Large-polygon area decay
+# ---------------------------------------------------------------------------
+# VectorScanner computes damage as: damage_fraction × maxdam × geometry_size.
+# For polygon features with very large OSM footprints (solar farms, power plant
+# complexes), the raw area overstates the actual built infrastructure.  We apply
+# a power-law decay: the first AREA_DECAY_THRESHOLD m² count at full rate, and
+# additional area counts at a diminishing rate controlled by AREA_DECAY_GAMMA.
+#
+#   effective_area = min(area, T) + max(0, area - T)^γ
+#
+# Because VectorScanner has already multiplied by the raw area, we correct
+# after the fact by scaling damage values:  corrected = raw × (effective / actual).
+#
+# Only applied to polygon features in asset types listed in AREA_DECAY_ASSET_TYPES.
+
+AREA_DECAY_THRESHOLD = 10_000   # m² — no decay below this
+AREA_DECAY_GAMMA = 0.7          # power-law exponent for excess area
+AREA_DECAY_ASSET_TYPES = {"power", "gas", "oil"}
+
+
+def effective_area(actual: float, threshold: float = AREA_DECAY_THRESHOLD,
+                   gamma: float = AREA_DECAY_GAMMA) -> float:
+    """Compute effective area with power-law decay beyond threshold."""
+    if actual <= threshold:
+        return actual
+    return threshold + (actual - threshold) ** gamma
+
+
+def _compute_area_scale_factors(
+    features: gpd.GeoDataFrame,
+    asset_type: str,
+) -> pd.Series:
+    """
+    Compute per-feature damage scale factors for the area decay correction.
+
+    Returns a Series (indexed like features) of floats in (0, 1].
+    Features that don't need correction get 1.0.
+    """
+    scale = pd.Series(1.0, index=features.index)
+
+    if asset_type not in AREA_DECAY_ASSET_TYPES:
+        return scale
+
+    # Only correct polygon features
+    is_poly = features.geometry.geom_type.isin(["Polygon", "MultiPolygon"])
+    if not is_poly.any():
+        return scale
+
+    # Compute area in metric CRS
+    polys = features[is_poly]
+    if polys.crs is not None and polys.crs.to_epsg() != 3035:
+        areas = polys.to_crs(epsg=3035).geometry.area
+    else:
+        areas = polys.geometry.area
+
+    for idx in polys.index:
+        actual = float(areas.loc[idx])
+        if actual > AREA_DECAY_THRESHOLD:
+            eff = effective_area(actual)
+            scale.loc[idx] = eff / actual
+
+    return scale
+
+
+# ---------------------------------------------------------------------------
 # Damage calculation per return period
 # ---------------------------------------------------------------------------
 
@@ -45,6 +110,10 @@ def compute_damage_per_rp(
 
     Uses multi_curves to compute damage for all vulnerability curves
     (min / mean / max) in a single pass.
+
+    After VectorScanner returns, applies an area-decay correction for
+    large polygon features (see AREA_DECAY_* constants) to avoid
+    overestimating damage for oversized OSM footprints.
 
     Args:
         features:        Exposure GeoDataFrame
@@ -74,6 +143,19 @@ def compute_damage_per_rp(
         disable_progress=True,
         return_full=False,
     )
+
+    # --- Area decay correction for large polygons ---
+    if asset_type in AREA_DECAY_ASSET_TYPES:
+        scale = _compute_area_scale_factors(features, asset_type)
+        needs_scaling = scale < 1.0
+        if needs_scaling.any():
+            # Scale all numeric damage columns
+            damage_cols = [c for c in result.columns
+                          if c not in ("geometry", "object_type", "osm_id")]
+            aligned_scale = scale.reindex(result.index, fill_value=1.0)
+            for col in damage_cols:
+                if pd.api.types.is_numeric_dtype(result[col]):
+                    result[col] = result[col] * aligned_scale
 
     return result
 

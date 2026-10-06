@@ -89,6 +89,8 @@ class Config:
         "coastal_stac_url",
         "https://storage.googleapis.com/coclico-data-public/coclico/coclico-stac/catalog.json",
     )
+    COASTPROS_PATH = Path(_cfg["coastpros_path"]) if "coastpros_path" in _cfg else None
+    NUTS2_PATH = Path(_cfg["nuts2_path"]) if "nuts2_path" in _cfg else None
 
     # Curve exclusions per asset type per hazard (environment-independent)
     FLOOD_CURVE_EXCLUSIONS = {
@@ -226,6 +228,55 @@ class Config:
                 "F2.3",
                 "F5.1",
             ],
+            # cable/catenary_mast previously had NO exclusions -- multi_curves
+            # leaked flat-zero foreign curves (F1.5/F1.6/F6.1) into cable's min
+            # and unrelated curves (F9.1/F10.1) into catenary_mast's max.
+            "cable": [
+                "F1.1", "F1.2", "F1.3", "F1.4", "F1.5", "F1.6", "F1.7",
+                "F2.1", "F2.2", "F2.3", "F6.1", "F6.2", "F9.1", "F10.1",
+            ],
+            "catenary_mast": [
+                "F1.1", "F1.2", "F1.3", "F1.4", "F1.5", "F1.6", "F1.7",
+                "F2.1", "F2.2", "F2.3", "F5.1", "F6.1", "F6.2", "F9.1",
+            ],
+        },
+        # telecom previously had NO exclusions -- mast/communication (own
+        # curve F10.1) picked up tower/communications_tower's flat-zero F6.1
+        # as their EAD_min; tower/communications_tower (own F6.1/F6.2) picked
+        # up F10.1.
+        "telecom": {
+            "mast": ["F6.1", "F6.2"],
+            "communication": ["F6.1", "F6.2"],
+            "communications_tower": ["F10.1"],
+            "tower": ["F10.1"],
+        },
+        # gas/oil previously had NO exclusions -- pipeline's flat-zero F16.x
+        # (and gas's F13.x) leaked into storage_tank/gasometer/etc. as EAD_min=0
+        # EU-wide. pipeline's own F16.x/F15.1 stays flat-zero either way
+        # (confirmed intentional -- buried pipe), this just stops it
+        # contaminating the OTHER object types' bounds.
+        "gas": {
+            "pipeline": ["F13.1", "F13.2", "F13.3", "F13.5", "F2.1", "F2.2", "F2.3"],
+            "storage_tank": ["F13.1", "F13.2", "F13.3", "F13.5", "F16.1", "F16.2", "F16.3"],
+            "gasometer": ["F16.1", "F16.2", "F16.3", "F2.1", "F2.2", "F2.3"],
+            "substation": ["F13.1", "F13.2", "F13.3", "F13.5", "F16.1", "F16.2", "F16.3"],
+            "gas": ["F13.1", "F13.2", "F13.3", "F13.5", "F16.1", "F16.2", "F16.3"],
+            "LNG": ["F13.1", "F13.2", "F13.3", "F13.5", "F16.1", "F16.2", "F16.3"],
+            "natural_gas": ["F13.1", "F13.2", "F13.3", "F13.5", "F16.1", "F16.2", "F16.3"],
+        },
+        "oil": {
+            "pipeline": ["F1.4", "F15.1", "F2.1", "F2.2", "F2.3"],
+            "petroleum_well": ["F1.4", "F16.1", "F16.2", "F16.3", "F2.1", "F2.2", "F2.3"],
+            "oil_refinery": ["F15.1", "F16.1", "F16.2", "F16.3", "F2.1", "F2.2", "F2.3"],
+            "storage_tank": ["F1.4", "F15.1", "F16.1", "F16.2", "F16.3"],
+            "substation": ["F1.4", "F15.1", "F16.1", "F16.2", "F16.3"],
+            "refinery": ["F1.4", "F15.1", "F16.1", "F16.2", "F16.3"],
+            "oil": ["F1.4", "F15.1", "F16.1", "F16.2", "F16.3"],
+            "crude_oil": ["F1.4", "F15.1", "F16.1", "F16.2", "F16.3"],
+            "diesel": ["F1.4", "F15.1", "F16.1", "F16.2", "F16.3"],
+            "petroleum": ["F1.4", "F15.1", "F16.1", "F16.2", "F16.3"],
+            "fuel_oil": ["F1.4", "F15.1", "F16.1", "F16.2", "F16.3"],
+            "fuel": ["F1.4", "F15.1", "F16.1", "F16.2", "F16.3"],
         },
     }
 
@@ -469,6 +520,58 @@ class Config:
                 "W6.3",
                 "W7.2",
             ],
+            # cable/catenary_mast previously had NO wind exclusions -- cable's
+            # flat-zero own curve W7.2 left EAD_max wide open to tower curves
+            # (W3.x, up to ~1.0); catenary_mast picked up cable/line/tower curves.
+            "cable": [
+                "W3.5", "W3.6", "W3.7", "W3.8", "W3.9",
+                "W3.10", "W3.11", "W3.12", "W3.13", "W3.14",
+                "W4.33", "W4.34", "W4.35", "W4.36", "W4.37",
+                "W6.1", "W6.2", "W6.3",
+            ],
+            "catenary_mast": [
+                "W3.5", "W3.6", "W3.7", "W3.8", "W3.9",
+                "W3.10", "W3.11", "W3.12", "W3.13", "W3.14",
+                "W6.1", "W6.2", "W6.3", "W7.2",
+            ],
+        },
+        # telecom previously had NO wind exclusions.
+        "telecom": {
+            "mast": ["W10.3", "W10.4", "W10.5", "W10.6", "W10.7", "W10.8", "W10.9"],
+            "communication": ["W10.3", "W10.4", "W10.5", "W10.6", "W10.7", "W10.8", "W10.9"],
+            "communications_tower": [
+                "W3.5", "W3.6", "W3.7", "W3.8", "W3.9",
+                "W3.10", "W3.11", "W3.12", "W3.13", "W3.14",
+            ],
+            "tower": [
+                "W3.5", "W3.6", "W3.7", "W3.8", "W3.9",
+                "W3.10", "W3.11", "W3.12", "W3.13", "W3.14",
+            ],
+        },
+        # gas/oil previously had NO wind exclusions -- pipeline's flat-zero
+        # own curve W7.2 leaked into storage_tank/etc. as EAD_min=0.
+        "gas": {
+            "pipeline": ["W21.11", "W21.12", "W21.13", "W21.14"],
+            "storage_tank": ["W7.2"],
+            "gasometer": ["W7.2"],
+            "substation": ["W7.2"],
+            "gas": ["W7.2"],
+            "LNG": ["W7.2"],
+            "natural_gas": ["W7.2"],
+        },
+        "oil": {
+            "pipeline": ["W21.11", "W21.12", "W21.13", "W21.14"],
+            "petroleum_well": ["W7.2"],
+            "oil_refinery": ["W7.2"],
+            "storage_tank": ["W7.2"],
+            "substation": ["W7.2"],
+            "refinery": ["W7.2"],
+            "oil": ["W7.2"],
+            "crude_oil": ["W7.2"],
+            "diesel": ["W7.2"],
+            "petroleum": ["W7.2"],
+            "fuel_oil": ["W7.2"],
+            "fuel": ["W7.2"],
         },
     }
 
@@ -484,6 +587,8 @@ COMPLETE_EAD_COLS = [
     "EAD_min_river_current",
     "EAD_max_river_current",
     "exposure_abs_river_current",
+    "flood_extent_river_RP200_current",
+    "flood_extent_river_RP500_current",
     # River flood — future (4 scenarios)
     "EAD_mid_river_2050_SSP245",
     "EAD_min_river_2050_SSP245",
@@ -573,6 +678,7 @@ def run_single(
     hazards: list[str],
     skip_existing: bool,
     n_outer_workers: int = 1,
+    patch: bool = False,
 ) -> dict:
     """
     Run the full risk assessment pipeline for one country + asset combination.
@@ -581,6 +687,10 @@ def run_single(
         n_outer_workers: Number of outer (country+asset) parallel workers.
                          When > 1, inner RP-level parallelism is disabled
                          to avoid nested process pools and memory exhaustion.
+        patch:           If True and output parquet exists, load it instead of
+                         raw exposure — preserving all existing hazard columns.
+                         Only the columns produced by the requested hazards are
+                         overwritten; all others are kept intact.
 
     Returns a summary dict with status, timing, and basic stats.
     """
@@ -591,7 +701,7 @@ def run_single(
     out_path = output_path(config.OUTPUT_DIR, country_iso2, asset_type)
 
     # Skip if file exists and contains all required EAD columns
-    if skip_existing and is_complete(out_path):
+    if skip_existing and not patch and is_complete(out_path):
         print(f"  [skip] {label} — already complete.")
         return {"label": label, "status": "skipped", "elapsed": 0}
 
@@ -600,16 +710,24 @@ def run_single(
     inner_workers = 1 if n_outer_workers > 1 else None
 
     print(f"\n{'=' * 60}")
-    print(f"Processing: {label}")
+    print(f"Processing: {label}{' [PATCH]' if patch else ''}")
     print(f"{'=' * 60}")
 
     try:
-        # --- 1. Load exposure ---
-        print("[pipeline] Loading exposure data...")
-        features = load_exposure(config.EXPOSURE_DIR, asset_type, country_iso2)
-        if features is None or len(features) == 0:
-            return {"label": label, "status": "no_data", "elapsed": 0}
-        print(f"[pipeline] Loaded {len(features)} features")
+        # --- 1. Load exposure (or existing output in patch mode) ---
+        if patch and out_path.exists():
+            print(f"[pipeline] Patch mode — loading existing output: {out_path.name}")
+            features = gpd.read_parquet(str(out_path))
+            print(f"[pipeline] Loaded {len(features)} features (patch)")
+        else:
+            print("[pipeline] Loading exposure data...")
+            features = load_exposure(config.EXPOSURE_DIR, asset_type, country_iso2)
+            if features is None or len(features) == 0:
+                return {"label": label, "status": "no_data", "elapsed": 0}
+            print(f"[pipeline] Loaded {len(features)} features")
+
+        from constants import assign_default_well_pad_area
+        features = assign_default_well_pad_area(features, asset_type)
 
         # --- 2. Load basin data for future river ---
         basin_data = None
@@ -649,13 +767,27 @@ def run_single(
                 asset_type=asset_type,
                 stac_catalog_url=config.COASTAL_STAC_URL,
                 object_curve_exclusions=flood_exclusions,
+                coastpros_path=config.COASTPROS_PATH,
+                nuts2_path=config.NUTS2_PATH,
             )
 
         # --- 5. Windstorm ---
         if "windstorm" in hazards:
             from hazard_windstorm import assess_windstorm
+            from constants import INFRASTRUCTURE_DAMAGE_VALUES
 
             wind_exclusions = config.WIND_CURVE_EXCLUSIONS.get(asset_type, {})
+
+            # Rail windstorm damages catenary only, not full track reinstatement.
+            # Use power line maxdam (€/m overhead conductor) as catenary proxy.
+            wind_maxdam_override = None
+            if asset_type == "rail":
+                line_maxdam = INFRASTRUCTURE_DAMAGE_VALUES["power"]["line"]
+                wind_maxdam_override = {
+                    "rail":         line_maxdam,
+                    "narrow_gauge": line_maxdam,
+                }
+
             features = assess_windstorm(
                 features=features,
                 hazard_dir=config.WIND_HAZARD_DIR,
@@ -663,6 +795,7 @@ def run_single(
                 asset_type=asset_type,
                 object_curve_exclusions=wind_exclusions,
                 n_workers=inner_workers,
+                maxdam_override=wind_maxdam_override,
             )
 
         # --- 6. Earthquake ---
@@ -773,6 +906,7 @@ def run_pipeline(
     hazards: Optional[list[str]] = None,
     n_workers: Optional[int] = None,
     skip_existing: bool = False,
+    patch: bool = False,
 ):
     """
     Run the full MIRACA risk pipeline.
@@ -841,6 +975,7 @@ def run_pipeline(
         hazards=hazards,
         skip_existing=skip_existing,
         n_outer_workers=effective_workers,
+        patch=patch,
     )
 
     results = []
@@ -894,10 +1029,10 @@ def run_pipeline(
 
 
 def _run_single_unpacked(
-    country, asset, config, hazards, skip_existing, n_outer_workers
+    country, asset, config, hazards, skip_existing, n_outer_workers, patch=False
 ):
     """Unpacked wrapper for ProcessPoolExecutor (needs top-level picklable function)."""
-    return run_single(country, asset, config, hazards, skip_existing, n_outer_workers)
+    return run_single(country, asset, config, hazards, skip_existing, n_outer_workers, patch)
 
 
 def _folder(asset_type: str) -> str:
@@ -958,6 +1093,14 @@ def parse_args():
         action="store_false",
         help="Re-run all combinations even if output already exists",
     )
+    parser.add_argument(
+        "--patch",
+        action="store_true",
+        default=False,
+        help="Patch mode: load existing output parquet instead of raw exposure, "
+             "overwrite only the columns produced by the requested hazards, "
+             "preserve all other hazard columns. Implies --no-skip-existing.",
+    )
     return parser.parse_args()
 
 
@@ -989,4 +1132,5 @@ if __name__ == "__main__":
         hazards=args.hazards,
         n_workers=args.workers,
         skip_existing=args.skip_existing,
+        patch=args.patch,
     )

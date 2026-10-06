@@ -24,16 +24,17 @@ warnings.simplefilter(action="ignore", category=RuntimeWarning)
 # ---------------------------------------------------------------------------
 
 
-def load_config(config_path: Union[str, Path] = "config.yml") -> dict:
-    """Load YAML config file."""
-    config_path = Path(config_path)
-    if not config_path.exists():
+def load_config() -> dict:
+    config_path = Path(__file__).parent.parent / "config.yml"
+    try:
+        with open(config_path) as f:
+            return yaml.safe_load(f)
+    except FileNotFoundError:
         raise FileNotFoundError(
-            f"Config file not found: {config_path}\n"
+            f"config.yml not found at {config_path}.\n"
             "Copy config.template.yml to config.yml and fill in your paths."
         )
-    with open(config_path) as f:
-        return yaml.safe_load(f)
+
 
 
 # ---------------------------------------------------------------------------
@@ -41,6 +42,7 @@ def load_config(config_path: Union[str, Path] = "config.yml") -> dict:
 # ---------------------------------------------------------------------------
 
 ISO3_TO_ISO2 = {
+    "AND": "AD",
     "ALB": "AL",
     "AUT": "AT",
     "BEL": "BE",
@@ -55,6 +57,7 @@ ISO3_TO_ISO2 = {
     "ESP": "ES",
     "FIN": "FI",
     "FRA": "FR",
+    "GBR": "GB",
     "GRC": "EL",
     "HRV": "HR",
     "HUN": "HU",
